@@ -1,0 +1,7 @@
+-r requirements.txt
+
+tqdm==4.66.1
+pyinstaller>=5.0.0
+rich>=13.7.1
+mcp>=1.0.0
+textual>=1.0.0

@@ -55,6 +55,8 @@ The web app stores credentials in browser `localStorage` after login. Use the lo
 
 This repo includes `vercel.json`. Vercel will build the React app from `web/` and serve Python API functions from `api/`.
 
+`requirements.txt` is intentionally kept minimal for Vercel and contains only the web/API scraper dependencies. Terminal UI and MCP-only packages live in `requirements-tui-mcp.txt` so Vercel does not try to build native packages such as `pydantic-core`.
+
 ```sh
 vercel
 ```
@@ -71,6 +73,13 @@ source .venv/bin/activate  # Linux/Mac
 # .venv\Scripts\activate   # Windows
 uv pip install -r requirements.txt
 # or: pip install -r requirements.txt
+```
+
+For the full terminal UI + MCP tooling, install the optional dependency set:
+
+```sh
+uv pip install -r requirements-tui-mcp.txt
+# or: pip install -r requirements-tui-mcp.txt
 ```
 
 ### Configure terminal credentials (optional)
