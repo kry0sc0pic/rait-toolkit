@@ -1143,8 +1143,7 @@ function GeneralUtils({
         <span>Current courses only</span>
       </div>
       <p className="muted">
-        Reads each course&rsquo;s Course Progress widget from MyDy and brings it to 100% by visiting every pending activity. Maxxing only counts towards activities the
-        widget tracks.
+        Attempts to visit all files, activities, etc. to maximize hit rate. 100% may not be feasible via LMS Buddy depending on faculty added documents.
         {snapshotLoading && <span className="hitrate-loading"> · Loading live percentages…</span>}
       </p>
       {currentCourses.length ? (

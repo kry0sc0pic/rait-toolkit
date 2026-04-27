@@ -330,7 +330,7 @@ describe("LMS Buddy", () => {
     expect(screen.getByRole("heading", { name: "Tools", level: 1 })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Hitrate Maxxer Beta", level: 2 })).toBeInTheDocument();
     expect(
-      screen.getByText(/Reads each course.{1,3}s Course Progress widget from MyDy and brings it to 100%/),
+      screen.getByText(/Attempts to visit all files, activities, etc\. to maximize hit rate/),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Select subject")).not.toBeInTheDocument();
     const hitrateButton = await screen.findByRole("button", { name: "Start maxxing" });
