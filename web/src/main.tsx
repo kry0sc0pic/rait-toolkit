@@ -109,6 +109,7 @@ const DASHBOARD_CACHE_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-dashboard`;
 const COURSE_CACHE_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-course`;
 const DOWNLOAD_CACHE_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-download`;
 const DOWNLOAD_INDEX_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-download-index`;
+const HITRATE_CACHE_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-hitrate`;
 const MAX_CACHEABLE_DOWNLOAD_SIZE = 2_500_000;
 
 type JournalProfile = {
@@ -277,6 +278,32 @@ function persistDownloadCache(username: string, key: string, payload: CachedDown
     } catch {
       // keep evicting until we can write or index is exhausted.
     }
+  }
+}
+
+function hitrateCacheKey(username: string, courseId: string) {
+  return `${HITRATE_CACHE_PREFIX}:${cacheScope(username)}:${courseId}`;
+}
+
+function readHitrateCachePct(username: string, courseId: string): number {
+  try {
+    const raw = localStorage.getItem(hitrateCacheKey(username, courseId));
+    if (!raw) return 0;
+    const p = JSON.parse(raw) as { pct?: number };
+    return typeof p.pct === "number" && !Number.isNaN(p.pct) ? Math.min(100, Math.max(0, Math.round(p.pct))) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeHitrateCachePct(username: string, courseId: string, pct: number) {
+  try {
+    localStorage.setItem(
+      hitrateCacheKey(username, courseId),
+      JSON.stringify({ pct: Math.min(100, Math.max(0, Math.round(pct))), updatedAt: Date.now() }),
+    );
+  } catch {
+    // ignore
   }
 }
 
@@ -885,16 +912,7 @@ function CoursesPage({
   );
 }
 
-function CircularDial({ value, empty = false }: { value: number; empty?: boolean }) {
-  if (empty) {
-    return (
-      <div className="dial dial--empty" style={{ "--pct": "0%" } as React.CSSProperties}>
-        <div>
-          <span className="dial-empty-label">—</span>
-        </div>
-      </div>
-    );
-  }
+function CircularDial({ value }: { value: number }) {
   const v = Math.min(100, Math.max(0, value));
   return (
     <div className="dial" style={{ "--pct": `${v}%` } as React.CSSProperties}>
@@ -1024,6 +1042,7 @@ function GeneralUtils({
         course_name: item.course.name,
       });
       setResults((r) => ({ ...r, [item.course.id]: data }));
+      writeHitrateCachePct(credentials.username, item.course.id, hitratePercent(data));
     } catch (err) {
       setResults((r) => ({
         ...r,
@@ -1033,6 +1052,16 @@ function GeneralUtils({
       setLoadingId(null);
       window.setTimeout(() => setAnimatingCourseId(null), 1100);
     }
+  };
+
+  const displayHitRatePct = (courseId: string) => {
+    const row = results[courseId];
+    if (row && "error" in row) {
+      return readHitrateCachePct(credentials.username, courseId);
+    }
+    const data = row && !("error" in row) && row.success ? row : null;
+    if (data) return hitratePercent(data);
+    return readHitrateCachePct(credentials.username, courseId);
   };
 
   return (
@@ -1053,9 +1082,9 @@ function GeneralUtils({
             const row = results[item.course.id];
             const data = row && "error" in row ? null : row;
             const err = row && "error" in row ? row.error : null;
-            const hitRatePct = data?.success ? hitratePercent(data) : null;
+            const hitRatePct = displayHitRatePct(item.course.id);
             const busy = loadingId === item.course.id;
-            const atFullHitRate = hitRatePct !== null && hitRatePct >= 100;
+            const atFullHitRate = hitRatePct >= 100;
             return (
               <article
                 className={`utility-course-card hitrate-card ${
@@ -1063,14 +1092,12 @@ function GeneralUtils({
                 }`}
                 key={item.course.id}
               >
-                <CircularDial empty={hitRatePct === null} value={hitRatePct ?? 0} />
+                <CircularDial value={hitRatePct} />
                 <div>
                   <strong>{item.attendance.subject}</strong>
-                  {hitRatePct !== null && (
-                    <p className="hitrate-pct-line">
-                      Hit rate <strong>{`${hitRatePct}%`}</strong>
-                    </p>
-                  )}
+                  <p className="hitrate-pct-line">
+                    Hit rate <strong>{`${hitRatePct}%`}</strong>
+                  </p>
                   {data?.success && (
                     <small>
                       {data.marked ?? 0} marked · {data.skipped ?? 0} already done
@@ -1078,15 +1105,14 @@ function GeneralUtils({
                     </small>
                   )}
                   {err && <small className="hitrate-error">{err}</small>}
-                  {!row && <small>Run to update completion where supported.</small>}
                 </div>
                 <button
-                  className="hitrate-button"
+                  className={`hitrate-button ${busy ? "hitrate-button--glowing" : ""}`}
                   type="button"
                   disabled={Boolean(loadingId) || atFullHitRate}
                   onClick={() => void runMaxx(item)}
                 >
-                  {busy ? "Running…" : atFullHitRate ? "100% hit rate" : "Execute maxxing"}
+                  {busy ? "Maxxing…" : atFullHitRate ? "100% hit rate" : "Maxxing"}
                 </button>
               </article>
             );

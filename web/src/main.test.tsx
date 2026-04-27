@@ -320,8 +320,8 @@ describe("LMS Buddy", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Select subject")).not.toBeInTheDocument();
-    expect(screen.getByText("Run to update completion where supported.")).toBeInTheDocument();
-    const hitrateButton = screen.getByRole("button", { name: "Execute maxxing" });
+    const hitrateButton = screen.getByRole("button", { name: "Maxxing" });
+    expect(hitrateButton.closest("article")).toHaveTextContent("Hit rate 0%");
     expect(hitrateButton).toBeEnabled();
     await userEvent.click(hitrateButton);
     expect(await screen.findByText(/1 marked/)).toBeInTheDocument();
@@ -357,7 +357,7 @@ describe("LMS Buddy", () => {
     await userEvent.type(screen.getByPlaceholderText("Password"), credentials.password);
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
     await userEvent.click(await screen.findByRole("button", { name: "Tools" }));
-    await userEvent.click(screen.getByRole("button", { name: "Execute maxxing" }));
+    await userEvent.click(screen.getByRole("button", { name: "Maxxing" }));
     const fullBtn = await screen.findByRole("button", { name: "100% hit rate" });
     expect(fullBtn.closest("article")).toHaveTextContent("Hit rate 100%");
     expect(fullBtn).toBeDisabled();
