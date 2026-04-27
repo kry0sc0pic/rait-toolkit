@@ -627,7 +627,9 @@ function GeneralUtils({ currentCourses }: { currentCourses: CurrentSubjectCourse
   return (
     <section className={`panel hitrate-panel ${animatingCourseId ? "hitrate-panel--active" : ""}`}>
       <div className="section-title">
-        <h2>Hitrate Maxxer</h2>
+        <h2>
+          Hitrate Maxxer <span className="soon-tag">Coming soon</span>
+        </h2>
         <span>Current courses only</span>
       </div>
       <p className="muted">

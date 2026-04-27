@@ -203,7 +203,7 @@ describe("LMS Buddy", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Tools" }));
     expect(screen.getByRole("heading", { name: "Tools", level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Hitrate Maxxer", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Hitrate Maxxer Coming soon", level: 2 })).toBeInTheDocument();
     expect(screen.getByText(/Attempts to open all LMS resources/)).toBeInTheDocument();
     expect(screen.queryByLabelText("Select subject")).not.toBeInTheDocument();
     expect(screen.getByText("Hitrate percentage will be populated later.")).toBeInTheDocument();
