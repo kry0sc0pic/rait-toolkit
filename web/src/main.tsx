@@ -84,6 +84,14 @@ type CurrentSubjectCourse = {
   attendance: AttendanceSubject;
 };
 
+type AppView = "courses" | "journal" | "general";
+
+type AppRoute = {
+  view: AppView;
+  courseId?: string;
+  isLogin?: boolean;
+};
+
 const STORAGE_KEY = "lms-buddy-credentials";
 const JOURNAL_PROFILE_KEY = "lms-buddy-journal-profile";
 
@@ -173,12 +181,27 @@ function classesLabel(subject: AttendanceSubject): string {
   return `${subject.present}/${subject.total_classes} classes`;
 }
 
+function parseRoute(pathname = window.location.pathname): AppRoute {
+  if (pathname === "/login") return { view: "courses", isLogin: true };
+  if (pathname === "/lab-journal") return { view: "journal" };
+  if (pathname === "/tools") return { view: "general" };
+  const courseMatch = pathname.match(/^\/courses\/([^/]+)$/);
+  if (courseMatch) return { view: "courses", courseId: decodeURIComponent(courseMatch[1]) };
+  return { view: "courses" };
+}
+
+function viewPath(view: AppView): string {
+  if (view === "journal") return "/lab-journal";
+  if (view === "general") return "/tools";
+  return "/courses";
+}
+
 export function App() {
   const [credentials, setCredentials] = useState<Credentials>(() => loadSavedCredentials());
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [courseData, setCourseData] = useState<CourseData | null>(null);
-  const [view, setView] = useState<"courses" | "journal" | "general">("courses");
+  const [route, setRoute] = useState<AppRoute>(() => parseRoute());
   const [journalProfile, setJournalProfile] = useState<JournalProfile>(() => loadJournalProfile());
   const [journalSubject, setJournalSubject] = useState("");
   const [loading, setLoading] = useState(false);
@@ -189,11 +212,28 @@ export function App() {
   const activeDownloadControllerRef = useRef<AbortController | null>(null);
 
   const hasSavedCredentials = credentials.username && credentials.password;
+  const view = route.view;
+
+  function navigate(path: string, replace = false) {
+    if (window.location.pathname !== path) {
+      const action = replace ? "replaceState" : "pushState";
+      window.history[action](null, "", path);
+    }
+    setRoute(parseRoute(path));
+  }
 
   useEffect(() => {
     if (hasSavedCredentials) {
       void loadDashboard(credentials);
+    } else if (!route.isLogin) {
+      navigate("/login", true);
     }
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => setRoute(parseRoute());
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
   useEffect(() => {
@@ -206,7 +246,6 @@ export function App() {
     try {
       const data = await postJson<DashboardData>("/api/dashboard", nextCredentials);
       setDashboard(data);
-      setView("courses");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load dashboard.");
     } finally {
@@ -222,6 +261,7 @@ export function App() {
       await postJson("/api/login", credentials);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(credentials));
       await loadDashboard(credentials);
+      navigate("/courses", true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");
     } finally {
@@ -229,7 +269,7 @@ export function App() {
     }
   }
 
-  async function openCourse(course: Course) {
+  async function loadCourse(course: Course) {
     setSelectedCourse(course);
     setCourseData(null);
     setLoading(true);
@@ -245,6 +285,11 @@ export function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function openCourse(course: Course) {
+    navigate(`/courses/${encodeURIComponent(course.id)}`);
+    void loadCourse(course);
   }
 
   async function downloadMaterial(material: Material, signal?: AbortSignal): Promise<"completed" | "cancelled" | "failed"> {
@@ -313,12 +358,13 @@ export function App() {
     setSelectedCourse(null);
     setCourseData(null);
     setCredentials({ username: "", password: "" });
+    navigate("/login", true);
   }
 
-  function switchView(nextView: "courses" | "journal" | "general") {
+  function switchView(nextView: AppView) {
     setSelectedCourse(null);
     setCourseData(null);
-    setView(nextView);
+    navigate(viewPath(nextView));
   }
 
   const subjects = typeof dashboard?.attendance === "object" ? dashboard.attendance.subjects || [] : [];
@@ -337,6 +383,32 @@ export function App() {
     const currentIds = new Set(currentSubjectCourses.map((item) => item.course.id));
     return (dashboard?.courses || []).filter((course) => !currentIds.has(course.id));
   }, [dashboard, currentSubjectCourses]);
+
+  useEffect(() => {
+    if (!dashboard) return;
+
+    if (route.isLogin) {
+      navigate("/courses", true);
+      return;
+    }
+
+    if (!route.courseId) {
+      if (selectedCourse) {
+        setSelectedCourse(null);
+        setCourseData(null);
+      }
+      return;
+    }
+
+    if (selectedCourse?.id === route.courseId) return;
+
+    const course = dashboard.courses.find((item) => item.id === route.courseId);
+    if (course) {
+      void loadCourse(course);
+    } else {
+      navigate("/courses", true);
+    }
+  }, [dashboard, route.courseId, route.isLogin, selectedCourse]);
 
   if (!dashboard) {
     return (

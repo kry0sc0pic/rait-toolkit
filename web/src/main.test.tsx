@@ -70,6 +70,7 @@ function jsonResponse(payload: unknown, init?: ResponseInit) {
 
 beforeEach(() => {
   localStorage.clear();
+  window.history.replaceState(null, "", "/login");
   vi.restoreAllMocks();
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:lms-buddy");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
@@ -98,6 +99,7 @@ describe("LMS Buddy", () => {
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
     expect(await screen.findByRole("heading", { name: "Courses" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/courses");
     expect(screen.getByRole("heading", { name: "Courses and attendance" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Current Courses" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Machine Learning/ })).toBeInTheDocument();
@@ -121,7 +123,27 @@ describe("LMS Buddy", () => {
     await userEvent.click(screen.getByRole("button", { name: /logout/i }));
 
     expect(localStorage.getItem("lms-buddy-credentials")).toBeNull();
+    expect(window.location.pathname).toBe("/login");
     expect(screen.getByRole("heading", { name: "LMS Buddy" })).toBeInTheDocument();
+  });
+
+  it("restores a direct course URL after saved credentials load", async () => {
+    localStorage.setItem("lms-buddy-credentials", JSON.stringify(credentials));
+    window.history.replaceState(null, "", "/courses/101");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url === "/api/dashboard") return jsonResponse(dashboardPayload);
+        if (url === "/api/course") return jsonResponse(coursePayload);
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Machine Learning", level: 1 })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/courses/101");
   });
 
   it("opens course details and downloads a material through the API", async () => {
@@ -151,6 +173,7 @@ describe("LMS Buddy", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Machine Learning/ }));
 
     expect(await screen.findByRole("heading", { name: "Machine Learning", level: 1 })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/courses/101");
     expect(screen.getByText("Downloads are proxied through LMS Buddy. Large files may take time or hit Vercel limits.")).toBeInTheDocument();
     expect(screen.getAllByText("resource").length).toBeGreaterThan(0);
 
@@ -169,6 +192,7 @@ describe("LMS Buddy", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Tools" }));
     expect(screen.getByRole("heading", { name: "Tools", level: 1 })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/tools");
     expect(screen.queryByRole("heading", { name: "Machine Learning", level: 1 })).not.toBeInTheDocument();
   });
 
@@ -182,6 +206,7 @@ describe("LMS Buddy", () => {
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
 
     await userEvent.click(await screen.findByRole("button", { name: "Lab / Journal" }));
+    expect(window.location.pathname).toBe("/lab-journal");
     expect(screen.getByPlaceholderText("Name")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("USN number")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Batch / Course")).toBeInTheDocument();
