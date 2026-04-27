@@ -35,7 +35,9 @@ button {
 .login-page {
   display: grid;
   min-height: 100vh;
-  place-items: center;
+  align-content: center;
+  justify-items: center;
+  gap: 1rem;
   padding: 2rem;
 }
 

@@ -292,6 +292,12 @@ export function App() {
     void loadCourse(course);
   }
 
+  function closeCourse() {
+    setSelectedCourse(null);
+    setCourseData(null);
+    navigate("/courses");
+  }
+
   async function downloadMaterial(material: Material, signal?: AbortSignal): Promise<"completed" | "cancelled" | "failed"> {
     setDownloading(material.activity_url);
     setError("");
@@ -416,7 +422,7 @@ export function App() {
         <section className="login-card">
           <p className="eyebrow">MyDy helper</p>
           <h1>LMS Buddy</h1>
-          <p className="muted">A clean web dashboard for attendance, courses, grades, and materials.</p>
+          <p className="muted">Login with your DYPU email ID. All data is stored locally in your browser.</p>
           <form onSubmit={handleLogin} className="login-form">
             <input
               placeholder="Username / Email"
@@ -437,6 +443,7 @@ export function App() {
             </button>
           </form>
         </section>
+        <AppFooter />
       </main>
     );
   }
@@ -484,10 +491,7 @@ export function App() {
             loading={loading}
             downloading={downloading}
             bulkDownloading={bulkDownloading}
-            onBack={() => {
-              setSelectedCourse(null);
-              setCourseData(null);
-            }}
+            onBack={closeCourse}
             onDownload={downloadMaterial}
             onDownloadAll={downloadAllMaterials}
             onCancelDownloadAll={cancelDownloadAll}

@@ -93,6 +93,8 @@ describe("LMS Buddy", () => {
 
     render(<App />);
 
+    expect(screen.getByText("Login with your DYPU email ID. All data is stored locally in your browser.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Deeptanshu" })).toHaveAttribute("href", "https://github.com/Deeptanshuu");
     await userEvent.type(screen.getByPlaceholderText("Username / Email"), credentials.username);
     await userEvent.type(screen.getByPlaceholderText("Password"), credentials.password);
     expect(screen.queryByLabelText("Store credentials in localStorage")).not.toBeInTheDocument();
@@ -144,6 +146,33 @@ describe("LMS Buddy", () => {
 
     expect(await screen.findByRole("heading", { name: "Machine Learning", level: 1 })).toBeInTheDocument();
     expect(window.location.pathname).toBe("/courses/101");
+  });
+
+  it("returns from course details to the courses URL and clears course data", async () => {
+    localStorage.setItem("lms-buddy-credentials", JSON.stringify(credentials));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "/api/dashboard") return jsonResponse(dashboardPayload);
+      if (url === "/api/course") return jsonResponse(coursePayload);
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    await userEvent.click(await screen.findByRole("button", { name: /Machine Learning/ }));
+    expect(await screen.findByRole("heading", { name: "Machine Learning", level: 1 })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/courses/101");
+    expect(screen.getByText("Intro Notes")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Back to courses" }));
+
+    expect(window.location.pathname).toBe("/courses");
+    expect(await screen.findByRole("heading", { name: "Courses", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Courses and attendance" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Machine Learning", level: 1 })).not.toBeInTheDocument();
+    expect(screen.queryByText("Intro Notes")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("opens course details and downloads a material through the API", async () => {
