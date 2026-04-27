@@ -94,12 +94,37 @@ type AppRoute = {
 
 const STORAGE_KEY = "lms-buddy-credentials";
 const JOURNAL_PROFILE_KEY = "lms-buddy-journal-profile";
+const CACHE_VERSION = "v1";
+const DASHBOARD_CACHE_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-dashboard`;
+const COURSE_CACHE_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-course`;
+const DOWNLOAD_CACHE_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-download`;
+const DOWNLOAD_INDEX_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-download-index`;
+const MAX_CACHEABLE_DOWNLOAD_SIZE = 2_500_000;
 
 type JournalProfile = {
   name: string;
   usn: string;
   roll: string;
   batch: string;
+};
+
+type CachedValue<T> = {
+  updatedAt: number;
+  data: T;
+};
+
+type CachedDownload = {
+  filename: string;
+  mimeType: string;
+  dataUrl: string;
+  size: number;
+  savedAt: number;
+};
+
+type DownloadIndexEntry = {
+  key: string;
+  size: number;
+  updatedAt: number;
 };
 
 function loadSavedCredentials(): Credentials {
@@ -117,6 +142,143 @@ function loadJournalProfile(): JournalProfile {
     return raw ? JSON.parse(raw) : { name: "", usn: "", roll: "", batch: "" };
   } catch {
     return { name: "", usn: "", roll: "", batch: "" };
+  }
+}
+
+function cacheScope(username: string): string {
+  return encodeURIComponent(username.trim().toLowerCase() || "guest");
+}
+
+function dashboardCacheKey(username: string): string {
+  return `${DASHBOARD_CACHE_PREFIX}:${cacheScope(username)}`;
+}
+
+function courseCacheKey(username: string, courseId: string): string {
+  return `${COURSE_CACHE_PREFIX}:${cacheScope(username)}:${courseId}`;
+}
+
+function downloadCacheKey(username: string, activityUrl: string): string {
+  return `${DOWNLOAD_CACHE_PREFIX}:${cacheScope(username)}:${encodeURIComponent(activityUrl)}`;
+}
+
+function downloadIndexKey(username: string): string {
+  return `${DOWNLOAD_INDEX_PREFIX}:${cacheScope(username)}`;
+}
+
+function readCachedValue<T>(key: string): CachedValue<T> | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedValue<T>;
+    if (!parsed || typeof parsed !== "object" || !("data" in parsed)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedValue<T>(key: string, data: T): void {
+  try {
+    localStorage.setItem(key, JSON.stringify({ updatedAt: Date.now(), data } satisfies CachedValue<T>));
+  } catch {
+    // Ignore cache write failures.
+  }
+}
+
+function downloadBlob(filename: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return blob.arrayBuffer().then((buffer) => {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      const chunk = bytes.subarray(index, index + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+    return `data:${blob.type || "application/octet-stream"};base64,${btoa(binary)}`;
+  });
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, base64Data] = dataUrl.split(",", 2);
+  if (!header || !base64Data) {
+    throw new Error("Invalid cached file data.");
+  }
+  const mimeMatch = header.match(/^data:([^;]+);base64$/);
+  const mimeType = mimeMatch ? mimeMatch[1] : "application/octet-stream";
+  const binary = atob(base64Data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new Blob([bytes], { type: mimeType });
+}
+
+function loadDownloadIndex(username: string): DownloadIndexEntry[] {
+  try {
+    const raw = localStorage.getItem(downloadIndexKey(username));
+    return raw ? (JSON.parse(raw) as DownloadIndexEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveDownloadIndex(username: string, entries: DownloadIndexEntry[]): void {
+  try {
+    localStorage.setItem(downloadIndexKey(username), JSON.stringify(entries));
+  } catch {
+    // Ignore cache index write failures.
+  }
+}
+
+function persistDownloadCache(username: string, key: string, payload: CachedDownload): void {
+  if (payload.size > MAX_CACHEABLE_DOWNLOAD_SIZE) return;
+
+  const serialized = JSON.stringify(payload);
+  let index = loadDownloadIndex(username).filter((entry) => entry.key !== key);
+  const nextEntry = { key, size: payload.size, updatedAt: Date.now() } satisfies DownloadIndexEntry;
+
+  try {
+    localStorage.setItem(key, serialized);
+    index.unshift(nextEntry);
+    saveDownloadIndex(username, index);
+    return;
+  } catch {
+    // Best-effort eviction below.
+  }
+
+  while (index.length) {
+    const oldest = index.pop();
+    if (!oldest) break;
+    localStorage.removeItem(oldest.key);
+    try {
+      localStorage.setItem(key, serialized);
+      index.unshift(nextEntry);
+      saveDownloadIndex(username, index);
+      return;
+    } catch {
+      // keep evicting until we can write or index is exhausted.
+    }
+  }
+}
+
+function hasDownloadCache(username: string, activityUrl: string): boolean {
+  try {
+    const key = downloadCacheKey(username, activityUrl);
+    const raw = localStorage.getItem(key);
+    if (!raw) return false;
+    const parsed = JSON.parse(raw) as CachedDownload;
+    return Boolean(parsed?.dataUrl);
+  } catch {
+    return false;
   }
 }
 
@@ -208,8 +370,14 @@ export function App() {
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState<string | null>(null);
   const [bulkDownloading, setBulkDownloading] = useState(false);
+  const [revalidatingDashboard, setRevalidatingDashboard] = useState(false);
+  const [dashboardStaleOnly, setDashboardStaleOnly] = useState(false);
+  const [revalidatingCourse, setRevalidatingCourse] = useState(false);
+  const [courseStaleOnly, setCourseStaleOnly] = useState(false);
+  const [downloadListVersion, setDownloadListVersion] = useState(0);
   const bulkCancelRef = useRef(false);
   const activeDownloadControllerRef = useRef<AbortController | null>(null);
+  const prefetchedCoursesRef = useRef(new Set<string>());
 
   const hasSavedCredentials = credentials.username && credentials.password;
   const view = route.view;
@@ -237,19 +405,46 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    prefetchedCoursesRef.current.clear();
+  }, [credentials.username]);
+
+  useEffect(() => {
     localStorage.setItem(JOURNAL_PROFILE_KEY, JSON.stringify(journalProfile));
   }, [journalProfile]);
 
-  async function loadDashboard(nextCredentials = credentials) {
-    setLoading(true);
+  async function fetchDashboard(nextCredentials = credentials): Promise<DashboardData> {
+    return postJson<DashboardData>("/api/dashboard", nextCredentials);
+  }
+
+  async function loadDashboard(nextCredentials = credentials, options?: { useCache?: boolean }) {
+    const useCache = options?.useCache ?? true;
+    const cacheKey = dashboardCacheKey(nextCredentials.username);
+    const cached = useCache ? readCachedValue<DashboardData>(cacheKey)?.data : null;
+    if (cached) {
+      setDashboard(cached);
+      setLoading(false);
+      setRevalidatingDashboard(true);
+      setDashboardStaleOnly(false);
+    } else {
+      setRevalidatingDashboard(false);
+      setDashboardStaleOnly(false);
+      setLoading(true);
+    }
     setError("");
     try {
-      const data = await postJson<DashboardData>("/api/dashboard", nextCredentials);
+      const data = await fetchDashboard(nextCredentials);
       setDashboard(data);
+      writeCachedValue(cacheKey, data);
+      setDashboardStaleOnly(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load dashboard.");
+      if (!cached) {
+        setError(err instanceof Error ? err.message : "Unable to load dashboard.");
+      } else {
+        setDashboardStaleOnly(true);
+      }
     } finally {
       setLoading(false);
+      setRevalidatingDashboard(false);
     }
   }
 
@@ -260,7 +455,7 @@ export function App() {
     try {
       await postJson("/api/login", credentials);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(credentials));
-      await loadDashboard(credentials);
+      await loadDashboard(credentials, { useCache: false });
       navigate("/courses", true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");
@@ -271,8 +466,18 @@ export function App() {
 
   async function loadCourse(course: Course) {
     setSelectedCourse(course);
-    setCourseData(null);
-    setLoading(true);
+    const cacheKey = courseCacheKey(credentials.username, course.id);
+    const cached = readCachedValue<CourseData>(cacheKey)?.data;
+    setCourseData(cached || null);
+    if (cached) {
+      setLoading(false);
+      setRevalidatingCourse(true);
+      setCourseStaleOnly(false);
+    } else {
+      setRevalidatingCourse(false);
+      setCourseStaleOnly(false);
+      setLoading(true);
+    }
     setError("");
     try {
       const data = await postJson<CourseData>("/api/course", {
@@ -280,10 +485,17 @@ export function App() {
         course_id: course.id,
       });
       setCourseData(data);
+      writeCachedValue(cacheKey, data);
+      setCourseStaleOnly(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to load course.");
+      if (!cached) {
+        setError(err instanceof Error ? err.message : "Unable to load course.");
+      } else {
+        setCourseStaleOnly(true);
+      }
     } finally {
       setLoading(false);
+      setRevalidatingCourse(false);
     }
   }
 
@@ -295,6 +507,8 @@ export function App() {
   function closeCourse() {
     setSelectedCourse(null);
     setCourseData(null);
+    setRevalidatingCourse(false);
+    setCourseStaleOnly(false);
     navigate("/courses");
   }
 
@@ -302,6 +516,21 @@ export function App() {
     setDownloading(material.activity_url);
     setError("");
     try {
+      const cacheKey = downloadCacheKey(credentials.username, material.activity_url);
+      const cached = (() => {
+        try {
+          const raw = localStorage.getItem(cacheKey);
+          return raw ? (JSON.parse(raw) as CachedDownload) : null;
+        } catch {
+          return null;
+        }
+      })();
+      if (cached?.dataUrl) {
+        const blob = dataUrlToBlob(cached.dataUrl);
+        downloadBlob(cached.filename || `${material.name || "material"}.download`, blob);
+        return "completed";
+      }
+
       const response = await fetch("/api/download", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -316,12 +545,16 @@ export function App() {
       const disposition = response.headers.get("content-disposition") || "";
       const match = disposition.match(/filename\*=UTF-8''([^;]+)/);
       const filename = match ? decodeURIComponent(match[1]) : `${material.name || "material"}.download`;
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      link.click();
-      URL.revokeObjectURL(url);
+      downloadBlob(filename, blob);
+      const dataUrl = await blobToDataUrl(blob);
+      persistDownloadCache(credentials.username, cacheKey, {
+        filename,
+        mimeType: blob.type || "application/octet-stream",
+        dataUrl,
+        size: blob.size,
+        savedAt: Date.now(),
+      });
+      setDownloadListVersion((n) => n + 1);
       return "completed";
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
@@ -363,6 +596,10 @@ export function App() {
     setDashboard(null);
     setSelectedCourse(null);
     setCourseData(null);
+    setRevalidatingDashboard(false);
+    setDashboardStaleOnly(false);
+    setRevalidatingCourse(false);
+    setCourseStaleOnly(false);
     setCredentials({ username: "", password: "" });
     navigate("/login", true);
   }
@@ -370,6 +607,8 @@ export function App() {
   function switchView(nextView: AppView) {
     setSelectedCourse(null);
     setCourseData(null);
+    setRevalidatingCourse(false);
+    setCourseStaleOnly(false);
     navigate(viewPath(nextView));
   }
 
@@ -402,6 +641,8 @@ export function App() {
       if (selectedCourse) {
         setSelectedCourse(null);
         setCourseData(null);
+        setRevalidatingCourse(false);
+        setCourseStaleOnly(false);
       }
       return;
     }
@@ -415,6 +656,32 @@ export function App() {
       navigate("/courses", true);
     }
   }, [dashboard, route.courseId, route.isLogin, selectedCourse]);
+
+  useEffect(() => {
+    if (!dashboard?.courses?.length || selectedCourse) return;
+    const candidates = dashboard.courses.filter((course) => !prefetchedCoursesRef.current.has(course.id));
+    if (!candidates.length) return;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        for (const course of candidates) {
+          prefetchedCoursesRef.current.add(course.id);
+          const cacheKey = courseCacheKey(credentials.username, course.id);
+          const existing = readCachedValue<CourseData>(cacheKey);
+          if (existing) continue;
+          try {
+            const data = await postJson<CourseData>("/api/course", {
+              ...credentials,
+              course_id: course.id,
+            });
+            writeCachedValue(cacheKey, data);
+          } catch {
+            // Ignore prefetch errors; explicit opens handle retries.
+          }
+        }
+      })();
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [dashboard, selectedCourse, credentials]);
 
   if (!dashboard) {
     return (
@@ -449,6 +716,10 @@ export function App() {
   }
 
   const average = avgAttendance(dashboard.attendance);
+  const showSyncing = loading || revalidatingDashboard || revalidatingCourse;
+  const showHeaderCached = selectedCourse
+    ? revalidatingCourse || courseStaleOnly
+    : revalidatingDashboard || dashboardStaleOnly;
 
   return (
     <main className="app-shell">
@@ -479,7 +750,14 @@ export function App() {
             <p className="eyebrow">{typeof dashboard.attendance !== "string" && dashboard.attendance.semester}</p>
             <h1>{selectedCourse ? selectedCourse.name : view === "courses" ? "Courses" : view === "journal" ? "Lab / Journal" : "Tools"}</h1>
           </div>
-          <div className="status-pill">{loading ? "Syncing" : "Ready"}</div>
+          <div className="status-row" role="status" aria-live="polite">
+            <span className="status-pill">{showSyncing ? "Syncing" : "Ready"}</span>
+            {showHeaderCached && (
+              <span className="cache-badge" title="Data from local storage; may refresh in the background.">
+                Cached
+              </span>
+            )}
+          </div>
         </header>
 
         {error && <p className="error banner">{error}</p>}
@@ -489,6 +767,8 @@ export function App() {
             course={selectedCourse}
             data={courseData}
             loading={loading}
+            cacheUsername={credentials.username}
+            fileCacheVersion={downloadListVersion}
             downloading={downloading}
             bulkDownloading={bulkDownloading}
             onBack={closeCourse}
@@ -743,6 +1023,8 @@ function CourseDetail({
   course,
   data,
   loading,
+  cacheUsername,
+  fileCacheVersion,
   downloading,
   bulkDownloading,
   onBack,
@@ -753,6 +1035,8 @@ function CourseDetail({
   course: Course;
   data: CourseData | null;
   loading: boolean;
+  cacheUsername: string;
+  fileCacheVersion: number;
   downloading: string | null;
   bulkDownloading: boolean;
   onBack: () => void;
@@ -761,6 +1045,14 @@ function CourseDetail({
   onCancelDownloadAll: () => void;
 }) {
   const materials = data && typeof data.materials !== "string" ? data.materials.materials : [];
+  const materialRows = useMemo(
+    () =>
+      materials.map((material) => ({
+        material,
+        fileCached: hasDownloadCache(cacheUsername, material.activity_url),
+      })),
+    [materials, cacheUsername, fileCacheVersion],
+  );
   return (
     <>
       <button className="back-button" onClick={onBack}>
@@ -792,21 +1084,28 @@ function CourseDetail({
               Loading files...
             </div>
           ) : (
-            materials.map((material) => (
-              <div className="document-row" key={material.activity_url}>
-                <div>
-                  <strong>{material.name}</strong>
-                  <span>{material.type}</span>
+            materialRows.map(({ material, fileCached }) => (
+                <div className="document-row" key={material.activity_url}>
+                  <div>
+                    <strong>{material.name}</strong>
+                    <span className="document-type-row">
+                      {material.type}
+                      {fileCached && (
+                        <span className="cache-badge cache-badge--file" title="This file is stored locally; repeat downloads are instant.">
+                          File cached
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  <button
+                    className="download-button"
+                    disabled={bulkDownloading || downloading === material.activity_url}
+                    onClick={() => onDownload(material)}
+                  >
+                    <Download size={15} />
+                    {downloading === material.activity_url ? "Downloading..." : "Download"}
+                  </button>
                 </div>
-                <button
-                  className="download-button"
-                  disabled={bulkDownloading || downloading === material.activity_url}
-                  onClick={() => onDownload(material)}
-                >
-                  <Download size={15} />
-                  {downloading === material.activity_url ? "Downloading..." : "Download"}
-                </button>
-              </div>
             ))
           )}
           {!loading && !materials.length && <p className="muted">No downloadable materials found.</p>}

@@ -60,6 +60,11 @@ const coursePayload = {
   },
 };
 
+const courseCacheEntry = {
+  updatedAt: Date.now(),
+  data: coursePayload,
+};
+
 function jsonResponse(payload: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(payload), {
     status: 200,
@@ -148,6 +153,30 @@ describe("LMS Buddy", () => {
     expect(window.location.pathname).toBe("/courses/101");
   });
 
+  it("renders cached course data immediately and revalidates in background", async () => {
+    localStorage.setItem("lms-buddy-credentials", JSON.stringify(credentials));
+    localStorage.setItem(
+      "lms-buddy-cache-v1-course:student%40example.edu:101",
+      JSON.stringify(courseCacheEntry),
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "/api/dashboard") return jsonResponse(dashboardPayload);
+      if (url === "/api/course") return new Response("revalidation failed", { status: 500 });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    window.history.replaceState(null, "", "/courses/101");
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Machine Learning", level: 1 })).toBeInTheDocument();
+    expect(screen.getByText("Intro Notes")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/course", expect.any(Object));
+    });
+  });
+
   it("returns from course details to the courses URL and clears course data", async () => {
     localStorage.setItem("lms-buddy-credentials", JSON.stringify(credentials));
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -217,6 +246,13 @@ describe("LMS Buddy", () => {
       activity_url: "https://mydy.dypatil.edu/rait/mod/resource/view.php?id=1",
     });
     await waitFor(() => expect(HTMLAnchorElement.prototype.click).toHaveBeenCalled());
+    const apiDownloadCallsAfterFirstClick = fetchMock.mock.calls.filter(([url]) => url === "/api/download").length;
+    expect(apiDownloadCallsAfterFirstClick).toBe(1);
+
+    await userEvent.click(screen.getByRole("button", { name: "Download" }));
+    await waitFor(() => expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(2));
+    const apiDownloadCallsAfterSecondClick = fetchMock.mock.calls.filter(([url]) => url === "/api/download").length;
+    expect(apiDownloadCallsAfterSecondClick).toBe(1);
     expect(screen.queryByRole("button", { name: "Assignments" })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Tools" }));
