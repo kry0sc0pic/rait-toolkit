@@ -1053,7 +1053,7 @@ function GeneralUtils({
     void (async () => {
       try {
         const batch = await postJson<{ courses: Record<string, HitrateCourseResult & { error?: string }> }>(
-          "/api/hitrate-status",
+          "/api/hitrate_status",
           {
             ...credentials,
             courses: currentCourses.map((item) => ({

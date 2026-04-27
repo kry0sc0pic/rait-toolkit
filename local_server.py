@@ -23,7 +23,7 @@ API_HANDLERS = {
     "/api/course": CourseHandler,
     "/api/download": DownloadHandler,
     "/api/hitrate": HitrateHandler,
-    "/api/hitrate-status": HitrateStatusHandler,
+    "/api/hitrate_status": HitrateStatusHandler,
 }
 
 

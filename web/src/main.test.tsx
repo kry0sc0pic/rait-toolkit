@@ -268,7 +268,7 @@ describe("LMS Buddy", () => {
         const url = input.toString();
         if (url === "/api/login") return jsonResponse({ success: true });
         if (url === "/api/dashboard") return jsonResponse(dashboardPayload);
-        if (url === "/api/hitrate-status") {
+        if (url === "/api/hitrate_status") {
           return jsonResponse({
             success: true,
             courses: {
@@ -352,7 +352,7 @@ describe("LMS Buddy", () => {
         const url = input.toString();
         if (url === "/api/login") return jsonResponse({ success: true });
         if (url === "/api/dashboard") return jsonResponse(dashboardPayload);
-        if (url === "/api/hitrate-status") {
+        if (url === "/api/hitrate_status") {
           return jsonResponse({
             success: true,
             courses: {
