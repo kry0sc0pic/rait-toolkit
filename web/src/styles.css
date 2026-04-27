@@ -9,6 +9,7 @@
   --muted: #8d7068;
   --panel: rgba(255, 252, 248, 0.88);
   --shadow: 0 24px 80px rgba(85, 44, 35, 0.11);
+  --hitrate-high: #2a8a52;
 }
 
 * {
@@ -312,6 +313,14 @@ input:focus {
   font-weight: 400;
 }
 
+.dial.dial--hitrate-high {
+  background: conic-gradient(var(--hitrate-high) var(--pct), #f2ded7 0);
+}
+
+.dial.dial--hitrate-high > div strong {
+  color: var(--hitrate-high);
+}
+
 .hitrate-pct-line {
   margin: 0.35rem 0 0.2rem;
   font-size: 0.82rem;
@@ -323,6 +332,10 @@ input:focus {
   font-size: 1.05rem;
   font-weight: 400;
   color: var(--accent);
+}
+
+.hitrate-pct-line--high strong {
+  color: var(--hitrate-high);
 }
 
 .stat-card,

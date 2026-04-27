@@ -912,10 +912,13 @@ function CoursesPage({
   );
 }
 
-function CircularDial({ value }: { value: number }) {
+function CircularDial({ value, successTone = false }: { value: number; successTone?: boolean }) {
   const v = Math.min(100, Math.max(0, value));
   return (
-    <div className="dial" style={{ "--pct": `${v}%` } as React.CSSProperties}>
+    <div
+      className={`dial${successTone ? " dial--hitrate-high" : ""}`}
+      style={{ "--pct": `${v}%` } as React.CSSProperties}
+    >
       <div>
         <strong>{Math.round(v)}%</strong>
       </div>
@@ -1085,6 +1088,7 @@ function GeneralUtils({
             const hitRatePct = displayHitRatePct(item.course.id);
             const busy = loadingId === item.course.id;
             const atFullHitRate = hitRatePct >= 100;
+            const highHitRate = hitRatePct > 80;
             return (
               <article
                 className={`utility-course-card hitrate-card ${
@@ -1092,10 +1096,10 @@ function GeneralUtils({
                 }`}
                 key={item.course.id}
               >
-                <CircularDial value={hitRatePct} />
+                <CircularDial value={hitRatePct} successTone={highHitRate} />
                 <div>
                   <strong>{item.attendance.subject}</strong>
-                  <p className="hitrate-pct-line">
+                  <p className={`hitrate-pct-line${highHitRate ? " hitrate-pct-line--high" : ""}`}>
                     Hit rate <strong>{`${hitRatePct}%`}</strong>
                   </p>
                   {data?.success && (
