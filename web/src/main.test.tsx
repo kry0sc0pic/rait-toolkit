@@ -262,7 +262,41 @@ describe("LMS Buddy", () => {
   });
 
   it("shows lab journal and tools tabs, and persists journal profile details", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(dashboardPayload)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url === "/api/login") return jsonResponse({ success: true });
+        if (url === "/api/dashboard") return jsonResponse(dashboardPayload);
+        if (url === "/api/hitrate_status") {
+          return jsonResponse({
+            success: true,
+            courses: {
+              "101": {
+                course_name: "Machine Learning",
+                manual_activities: 4,
+                marked: 0,
+                skipped: 3,
+                failed: 0,
+                items: { marked: [], skipped: [], failed: [] },
+              },
+            },
+          });
+        }
+        if (url === "/api/hitrate") {
+          return jsonResponse({
+            success: true,
+            course_name: "Machine Learning",
+            manual_activities: 4,
+            marked: 1,
+            skipped: 3,
+            failed: 0,
+            items: { marked: [], skipped: [], failed: [] },
+          });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
 
     render(<App />);
 
@@ -294,13 +328,59 @@ describe("LMS Buddy", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Tools" }));
     expect(screen.getByRole("heading", { name: "Tools", level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Hitrate Maxxer Coming soon", level: 2 })).toBeInTheDocument();
-    expect(screen.getByText(/Attempts to open all LMS resources/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Hitrate Maxxer Beta", level: 2 })).toBeInTheDocument();
+    expect(
+      screen.getByText(/Attempts to visit all files, activities, etc\. to maximize hit rate/),
+    ).toBeInTheDocument();
     expect(screen.queryByLabelText("Select subject")).not.toBeInTheDocument();
-    expect(screen.getByText("Hitrate percentage will be populated later.")).toBeInTheDocument();
-    const hitrateButton = screen.getByRole("button", { name: "Execute maxxing" });
+    const hitrateButton = await screen.findByRole("button", { name: "Start maxxing" });
+    await waitFor(() => {
+      expect(hitrateButton.closest("article")).toHaveTextContent("75%");
+    });
     expect(hitrateButton).toBeEnabled();
     await userEvent.click(hitrateButton);
-    expect(hitrateButton.closest(".hitrate-card")).toHaveClass("hitrate-card--active");
+    const maxxedBtn = await screen.findByRole("button", { name: "MAXXED" });
+    expect(maxxedBtn).toBeDisabled();
+    expect(maxxedBtn.closest("article")).toHaveTextContent("100%");
+    expect(screen.getByText(/1 marked/)).toBeInTheDocument();
+  });
+
+  it("shows MAXXED disabled when snapshot already reports full completion", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url === "/api/login") return jsonResponse({ success: true });
+        if (url === "/api/dashboard") return jsonResponse(dashboardPayload);
+        if (url === "/api/hitrate_status") {
+          return jsonResponse({
+            success: true,
+            courses: {
+              "101": {
+                course_name: "Machine Learning",
+                manual_activities: 4,
+                marked: 0,
+                skipped: 4,
+                failed: 0,
+                items: { marked: [], skipped: [], failed: [] },
+              },
+            },
+          });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+
+    render(<App />);
+
+    await userEvent.type(screen.getByPlaceholderText("Username / Email"), credentials.username);
+    await userEvent.type(screen.getByPlaceholderText("Password"), credentials.password);
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Tools" }));
+    const fullBtn = await screen.findByRole("button", { name: "MAXXED" });
+    await waitFor(() => {
+      expect(fullBtn.closest("article")).toHaveTextContent("100%");
+    });
+    expect(fullBtn).toBeDisabled();
   });
 });

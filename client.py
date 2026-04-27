@@ -762,3 +762,216 @@ class MydyClient:
             }
         except Exception as e:
             return {"filename": url.split("/")[-1], "status": "error", "error": str(e)}
+
+    # -- hit rate maxxer ---------------------------------------------------
+    #
+    # Brings a course's "Course Progress" widget to 100% by GET-ing every
+    # not-yet-viewed activity. The widget's data source is customview.php,
+    # which lists each activity link with class="completed" or class="pending".
+    # A simple GET on a "pending" /mod/<type>/view.php?id=N flips it to
+    # "completed" and bumps the Viewed counter by 1. Verified live.
+
+    def get_course_progress(self, course_id: str) -> dict:
+        """Read-only: viewed/total/percent state for one course's progress widget.
+
+        Returns:
+            {
+              "total": int, "viewed": int, "not_viewed": int, "percent": int,
+              "pending":   [{"url", "name"}, ...],   # not yet viewed
+              "completed": [{"url", "name"}, ...],   # already viewed
+            }
+        """
+        if not self.logged_in:
+            return {"error": "Not logged in."}
+        self._rate_limit("course")
+        try:
+            resp = self.session.get(
+                f"{RAIT_URL}/course/customview.php?id={course_id}"
+            )
+        except requests.RequestException as e:
+            return {"error": str(e)}
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        pending: list[dict] = []
+        completed: list[dict] = []
+        for a in soup.find_all("a", class_=True):
+            cls = a.get("class") or []
+            if "pending" not in cls and "completed" not in cls:
+                continue
+            href = a.get("href", "")
+            if "/mod/" not in href or "/view.php" not in href:
+                continue
+            div = a.find("div")
+            text = (
+                div.get_text(separator=" ", strip=True)
+                if div else a.get_text(strip=True)
+            )
+            name = re.sub(r"\s+", " ", text.replace("\xa0", " ")).strip() or "Activity"
+            item = {"url": href, "name": name}
+            (completed if "completed" in cls else pending).append(item)
+
+        total = len(pending) + len(completed)
+        return {
+            "total": total,
+            "viewed": len(completed),
+            "not_viewed": len(pending),
+            "percent": round(len(completed) / total * 100) if total else 0,
+            "pending": pending,
+            "completed": completed,
+        }
+
+    @staticmethod
+    def _course_id_from(course: dict) -> str:
+        cid = str(course.get("id") or "")
+        if cid:
+            return cid
+        m = re.search(r"id=(\d+)", course.get("url", ""))
+        return m.group(1) if m else ""
+
+    def mark_activity_viewed(self, url: str) -> dict:
+        """GET an activity's view.php URL — this is what increments the widget."""
+        if not self.logged_in:
+            return {"url": url, "status": "error", "error": "Not logged in."}
+        self._rate_limit("activity")
+        try:
+            r = self.session.get(url, allow_redirects=True)
+            ok = r.status_code in (200, 302, 303)
+            return {
+                "url": url,
+                "status": "marked" if ok else "error",
+                "http_status": r.status_code,
+            }
+        except requests.RequestException as e:
+            return {"url": url, "status": "error", "error": str(e)}
+
+    def hit_rate_snapshot_course(self, course: dict) -> dict:
+        """Read-only: current Course Progress widget state for one course."""
+        if not self.logged_in:
+            return {"course_name": course.get("name", ""), "error": "Not logged in."}
+        cid = self._course_id_from(course)
+        if not cid:
+            return {"course_name": course.get("name", ""), "error": "Course id not found."}
+
+        progress = self.get_course_progress(cid)
+        if "error" in progress:
+            return {"course_name": course.get("name", ""), "error": progress["error"]}
+
+        return {
+            "course_name": course.get("name", ""),
+            "total": progress["total"],
+            "viewed": progress["viewed"],
+            "not_viewed": progress["not_viewed"],
+            "percent": progress["percent"],
+            "manual_activities": progress["total"],
+            "marked": 0,
+            "skipped": progress["viewed"],
+            "failed": 0,
+            "items": {"marked": [], "skipped": progress["completed"], "failed": []},
+        }
+
+    def hit_rate_snapshot_courses(self, courses: list[dict]) -> dict:
+        """Snapshot coverage for many courses using one logged-in session."""
+        if not self.logged_in:
+            return {"error": "Not logged in."}
+        results: dict[str, dict] = {}
+        for course in courses:
+            cid = self._course_id_from(course)
+            if not cid:
+                continue
+            results[cid] = self.hit_rate_snapshot_course(course)
+        return {"courses": results}
+
+    def hit_rate_maxx_course(self, course: dict, progress_callback=None) -> dict:
+        """Bring one course's Course Progress widget to 100%.
+
+        GETs every activity in the course's "pending" set (per customview.php).
+        Already-viewed activities are not touched. Returns before/after counts.
+        """
+        if not self.logged_in:
+            return {"course_name": course.get("name", ""), "error": "Not logged in."}
+        cid = self._course_id_from(course)
+        if not cid:
+            return {"course_name": course.get("name", ""), "error": "Course id not found."}
+
+        progress = self.get_course_progress(cid)
+        if "error" in progress:
+            return {"course_name": course.get("name", ""), "error": progress["error"]}
+
+        pending = progress["pending"]
+        if progress_callback:
+            progress_callback("course_start", {
+                "course": course.get("name", ""),
+                "total": progress["total"],
+                "viewed_before": progress["viewed"],
+                "pending_count": len(pending),
+                "percent_before": progress["percent"],
+            })
+
+        marked: list[dict] = []
+        failed: list[dict] = []
+        for i, item in enumerate(pending):
+            if progress_callback:
+                progress_callback("activity", {
+                    "index": i + 1, "total": len(pending),
+                    "name": item["name"], "url": item["url"],
+                })
+            r = self.mark_activity_viewed(item["url"])
+            r["name"] = item["name"]
+            (marked if r.get("status") == "marked" else failed).append(r)
+            if progress_callback:
+                progress_callback("item_done", r)
+
+        after = self.get_course_progress(cid)
+        return {
+            "course_name": course.get("name", ""),
+            "total": progress["total"],
+            "viewed_before": progress["viewed"],
+            "viewed_after": after.get("viewed", progress["viewed"] + len(marked)),
+            "percent_before": progress["percent"],
+            "percent_after": after.get("percent", 0),
+            "manual_activities": progress["total"],
+            "marked": len(marked),
+            "skipped": progress["viewed"],
+            "failed": len(failed),
+            "items": {
+                "marked": marked,
+                "skipped": progress["completed"],
+                "failed": failed,
+            },
+        }
+
+    def hit_rate_maxx_all(
+        self, courses: list[dict] | None = None, progress_callback=None
+    ) -> dict:
+        if not self.logged_in:
+            return {"error": "Not logged in."}
+        if courses is None:
+            listing = self.list_courses()
+            if isinstance(listing, str):
+                return {"error": listing}
+            courses = listing
+
+        results: list[dict] = []
+        total_marked = total_skipped = total_failed = 0
+
+        for idx, co in enumerate(courses):
+            if progress_callback:
+                progress_callback(
+                    "course",
+                    {"index": idx + 1, "total": len(courses), "course": co},
+                )
+            r = self.hit_rate_maxx_course(co, progress_callback=progress_callback)
+            results.append(r)
+            total_marked += r.get("marked", 0)
+            total_skipped += r.get("skipped", 0)
+            total_failed += r.get("failed", 0)
+
+        return {
+            "summary": {
+                "courses_processed": len(results),
+                "total_marked": total_marked,
+                "total_skipped": total_skipped,
+                "total_failed": total_failed,
+            },
+            "courses": results,
+        }

@@ -84,6 +84,23 @@ type CurrentSubjectCourse = {
   attendance: AttendanceSubject;
 };
 
+type HitrateCourseResult = {
+  success: boolean;
+  course_name?: string;
+  manual_activities?: number;
+  marked?: number;
+  skipped?: number;
+  failed?: number;
+  message?: string;
+};
+
+function hitRatePctFromResult(row: HitrateCourseResult): number {
+  const total = row.manual_activities ?? 0;
+  if (!total) return 0;
+  const done = (row.marked ?? 0) + (row.skipped ?? 0);
+  return Math.min(100, Math.round((100 * done) / total));
+}
+
 type AppView = "courses" | "journal" | "general";
 
 type AppRoute = {
@@ -99,6 +116,7 @@ const DASHBOARD_CACHE_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-dashboard`;
 const COURSE_CACHE_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-course`;
 const DOWNLOAD_CACHE_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-download`;
 const DOWNLOAD_INDEX_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-download-index`;
+const HITRATE_CACHE_PREFIX = `lms-buddy-cache-${CACHE_VERSION}-hitrate`;
 const MAX_CACHEABLE_DOWNLOAD_SIZE = 2_500_000;
 
 type JournalProfile = {
@@ -267,6 +285,32 @@ function persistDownloadCache(username: string, key: string, payload: CachedDown
     } catch {
       // keep evicting until we can write or index is exhausted.
     }
+  }
+}
+
+function hitrateCacheKey(username: string, courseId: string) {
+  return `${HITRATE_CACHE_PREFIX}:${cacheScope(username)}:${courseId}`;
+}
+
+function readHitrateCachePct(username: string, courseId: string): number {
+  try {
+    const raw = localStorage.getItem(hitrateCacheKey(username, courseId));
+    if (!raw) return 0;
+    const p = JSON.parse(raw) as { pct?: number };
+    return typeof p.pct === "number" && !Number.isNaN(p.pct) ? Math.min(100, Math.max(0, Math.round(p.pct))) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeHitrateCachePct(username: string, courseId: string, pct: number) {
+  try {
+    localStorage.setItem(
+      hitrateCacheKey(username, courseId),
+      JSON.stringify({ pct: Math.min(100, Math.max(0, Math.round(pct))), updatedAt: Date.now() }),
+    );
+  } catch {
+    // ignore
   }
 }
 
@@ -792,7 +836,7 @@ export function App() {
             setSubjectId={setJournalSubject}
           />
         ) : (
-          <GeneralUtils currentCourses={currentSubjectCourses} />
+          <GeneralUtils currentCourses={currentSubjectCourses} credentials={credentials} />
         )}
         <AppFooter />
       </section>
@@ -875,11 +919,15 @@ function CoursesPage({
   );
 }
 
-function CircularDial({ value }: { value: number }) {
+function CircularDial({ value, successTone = false }: { value: number; successTone?: boolean }) {
+  const v = Math.min(100, Math.max(0, value));
   return (
-    <div className="dial" style={{ "--pct": `${Math.min(100, Math.max(0, value))}%` } as React.CSSProperties}>
+    <div
+      className={`dial${successTone ? " dial--hitrate-high" : ""}`}
+      style={{ "--pct": `${v}%` } as React.CSSProperties}
+    >
       <div>
-        <strong>{value}%</strong>
+        <strong>{Math.round(v)}%</strong>
       </div>
     </div>
   );
@@ -974,43 +1022,183 @@ function JournalUtils({
   );
 }
 
-function GeneralUtils({ currentCourses }: { currentCourses: CurrentSubjectCourse[] }) {
+function GeneralUtils({
+  currentCourses,
+  credentials,
+}: {
+  currentCourses: CurrentSubjectCourse[];
+  credentials: Credentials;
+}) {
   const [animatingCourseId, setAnimatingCourseId] = useState<string | null>(null);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [liveMetrics, setLiveMetrics] = useState<Record<string, HitrateCourseResult | { error: string }>>({});
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const [justMaxxedId, setJustMaxxedId] = useState<string | null>(null);
+  const justMaxxedTimerRef = useRef<number | null>(null);
 
-  const playAnimation = (courseId: string) => {
+  useEffect(() => {
+    return () => {
+      if (justMaxxedTimerRef.current !== null) {
+        window.clearTimeout(justMaxxedTimerRef.current);
+      }
+    };
+  }, []);
+
+  const courseListKey = currentCourses.map((c) => c.course.id).join(",");
+
+  useEffect(() => {
+    if (!courseListKey || !credentials.username) return;
+    let cancelled = false;
+    setSnapshotLoading(true);
+    void (async () => {
+      try {
+        const batch = await postJson<{ courses: Record<string, HitrateCourseResult & { error?: string }> }>(
+          "/api/hitrate_status",
+          {
+            ...credentials,
+            courses: currentCourses.map((item) => ({
+              course_id: item.course.id,
+              course_name: item.course.name,
+            })),
+          },
+        );
+        if (cancelled || !batch?.courses) return;
+        setLiveMetrics((prev) => {
+          const next = { ...prev };
+          for (const [courseId, row] of Object.entries(batch.courses)) {
+            if (row?.error || typeof row?.manual_activities !== "number") {
+              next[courseId] = { error: row?.error || "Snapshot unavailable." };
+              continue;
+            }
+            const enriched: HitrateCourseResult = { ...row, success: true };
+            next[courseId] = enriched;
+            writeHitrateCachePct(credentials.username, courseId, hitRatePctFromResult(enriched));
+          }
+          return next;
+        });
+      } catch {
+        // Keep showing cached % until a future load succeeds.
+      } finally {
+        if (!cancelled) setSnapshotLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      setSnapshotLoading(false);
+    };
+  }, [courseListKey, credentials.username, credentials.password]);
+
+  const runMaxx = async (item: CurrentSubjectCourse) => {
+    if (loadingId) return;
     setAnimatingCourseId(null);
-    window.setTimeout(() => setAnimatingCourseId(courseId), 0);
-    window.setTimeout(() => setAnimatingCourseId(null), 1100);
+    window.setTimeout(() => setAnimatingCourseId(item.course.id), 0);
+    setLoadingId(item.course.id);
+    let succeeded = false;
+    try {
+      const data = await postJson<HitrateCourseResult>("/api/hitrate", {
+        ...credentials,
+        course_id: item.course.id,
+        course_name: item.course.name,
+      });
+      setLiveMetrics((r) => ({ ...r, [item.course.id]: data }));
+      writeHitrateCachePct(credentials.username, item.course.id, hitRatePctFromResult(data));
+      succeeded = true;
+    } catch (err) {
+      setLiveMetrics((r) => ({
+        ...r,
+        [item.course.id]: { error: err instanceof Error ? err.message : "Request failed." },
+      }));
+    } finally {
+      setLoadingId(null);
+      window.setTimeout(() => setAnimatingCourseId(null), 1100);
+      if (succeeded) {
+        setJustMaxxedId(item.course.id);
+        if (justMaxxedTimerRef.current !== null) {
+          window.clearTimeout(justMaxxedTimerRef.current);
+        }
+        justMaxxedTimerRef.current = window.setTimeout(() => {
+          setJustMaxxedId((current) => (current === item.course.id ? null : current));
+          justMaxxedTimerRef.current = null;
+        }, 2200);
+      }
+    }
+  };
+
+  const displayHitRatePct = (courseId: string) => {
+    const row = liveMetrics[courseId];
+    if (row && "error" in row) {
+      return readHitrateCachePct(credentials.username, courseId);
+    }
+    const data = row && !("error" in row) && row.success ? row : null;
+    if (data) return hitRatePctFromResult(data);
+    return readHitrateCachePct(credentials.username, courseId);
   };
 
   return (
     <section className={`panel hitrate-panel ${animatingCourseId ? "hitrate-panel--active" : ""}`}>
       <div className="section-title">
         <h2>
-          Hitrate Maxxer <span className="soon-tag">Coming soon</span>
+          Hitrate Maxxer <span className="soon-tag">Beta</span>
         </h2>
         <span>Current courses only</span>
       </div>
       <p className="muted">
-        Attempts to open all LMS resources to maximize LMS activity for submission slips. It may not reach 100% depending on the type of resources uploaded by faculty.
+        Attempts to visit all files, activities, etc. to maximize hit rate. 100% may not be feasible via LMS Buddy depending on faculty added documents.
+        {snapshotLoading && <span className="hitrate-loading"> · Loading live percentages…</span>}
       </p>
       {currentCourses.length ? (
         <div className="subject-grid">
-          {currentCourses.map((item) => (
-            <article
-              className={`utility-course-card hitrate-card ${animatingCourseId === item.course.id ? "hitrate-card--active" : ""}`}
-              key={item.course.id}
-            >
-              <CircularDial value={0} />
-              <div>
-                <strong>{item.attendance.subject}</strong>
-                <small>Hitrate percentage will be populated later.</small>
-              </div>
-              <button className="hitrate-button" type="button" onClick={() => playAnimation(item.course.id)}>
-                Execute maxxing
-              </button>
-            </article>
-          ))}
+          {currentCourses.map((item) => {
+            const row = liveMetrics[item.course.id];
+            const data = row && "error" in row ? null : row;
+            const err = row && "error" in row ? row.error : null;
+            const hitRatePct = displayHitRatePct(item.course.id);
+            const busy = loadingId === item.course.id;
+            const atFullHitRate = hitRatePct >= 100;
+            const highHitRate = hitRatePct > 80;
+            const showJustMaxxed = justMaxxedId === item.course.id && !busy;
+
+            let buttonLabel: string;
+            if (busy) buttonLabel = "Maxxing...";
+            else if (snapshotLoading) buttonLabel = "Loading...";
+            else if (atFullHitRate || showJustMaxxed) buttonLabel = "MAXXED";
+            else buttonLabel = "Start maxxing";
+
+            const buttonClasses = ["hitrate-button"];
+            if (busy) buttonClasses.push("hitrate-button--glowing");
+            if (atFullHitRate || showJustMaxxed) buttonClasses.push("hitrate-button--maxxed");
+            else if (snapshotLoading) buttonClasses.push("hitrate-button--maxxed");
+            else if (!busy) buttonClasses.push("hitrate-button--incomplete");
+
+            return (
+              <article
+                className={`utility-course-card hitrate-card ${
+                  animatingCourseId === item.course.id ? "hitrate-card--active" : ""
+                }`}
+                key={item.course.id}
+              >
+                <CircularDial value={hitRatePct} successTone={highHitRate} />
+                <div>
+                  <strong>{item.attendance.subject}</strong>
+                  {data?.success && (
+                    <small>
+                      {data.marked ?? 0} marked · {data.skipped ?? 0} already done
+                      {!!data.failed && ` · ${data.failed} failed`}
+                    </small>
+                  )}
+                  {err && <small className="hitrate-error">{err}</small>}
+                </div>
+                <button
+                  className={buttonClasses.join(" ")}
+                  type="button"
+                  disabled={Boolean(loadingId) || atFullHitRate || showJustMaxxed || snapshotLoading}
+                  onClick={() => void runMaxx(item)}
+                >
+                  {buttonLabel}
+                </button>
+              </article>
+            );
+          })}
         </div>
       ) : (
         <p className="muted">No current courses found.</p>
