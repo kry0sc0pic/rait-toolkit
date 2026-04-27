@@ -1,5 +1,6 @@
 .env
 /venv/
+.venv/
 *.pdf
 *.ppt
 *.pptx
@@ -9,9 +10,16 @@
 *.xlsx
 *.csv
 *.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!vercel.json
 *.xml
 /build/
 /dist/
+node_modules/
+web/dist/
+.vercel-home/
 *.spec
 __pycache__/
 *.pyc

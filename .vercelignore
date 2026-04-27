@@ -1,0 +1,14 @@
+node_modules
+web/dist
+.venv
+venv
+.vercel-home
+__pycache__
+*.pyc
+*.pdf
+*.ppt
+*.pptx
+*.docx
+*.doc
+*.xlsx
+*.csv

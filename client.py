@@ -9,7 +9,7 @@ import os
 import re
 import time
 import random
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -51,6 +51,24 @@ class MydyClient:
                 return title_text.split("Course:", 1)[1].strip()
             return title_text.strip()
         return "Unknown Course"
+
+    @staticmethod
+    def _absolute_url(href: str) -> str:
+        return href if href.startswith("http") else BASE_URL + href
+
+    @staticmethod
+    def _is_mydy_url(url: str) -> bool:
+        host = urlparse(url).netloc.lower()
+        return host == "mydy.dypatil.edu"
+
+    @staticmethod
+    def _filename_from_response(resp: requests.Response, url: str) -> str:
+        disposition = resp.headers.get("content-disposition", "")
+        match = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', disposition, re.IGNORECASE)
+        if match:
+            return unquote(match.group(1).strip())
+        filename = unquote(urlparse(url).path.split("/")[-1])
+        return filename or "material"
 
     def _fetch_course_page(self, course_id: str) -> tuple[BeautifulSoup, str] | str:
         self._rate_limit("course")
@@ -511,6 +529,110 @@ class MydyClient:
         return results
 
     # -- download ----------------------------------------------------------
+
+    def list_downloadable_materials(self, course_id: str) -> dict | str:
+        """Return course activities that usually resolve to downloadable files."""
+        if not self.logged_in:
+            return "Not logged in."
+
+        result = self._fetch_course_page(course_id)
+        if isinstance(result, str):
+            return result
+        soup, course_name = result
+
+        activity_types = [
+            "/mod/resource/view.php", "/mod/flexpaper/view.php",
+            "/mod/presentation/view.php", "/mod/casestudy/view.php",
+            "/mod/dyquestion/view.php",
+        ]
+        materials: list[dict] = []
+        seen: set[str] = set()
+
+        for li in soup.find_all("li", class_=re.compile(r"\bactivity\b")):
+            a = li.find("a", href=True)
+            if not a:
+                continue
+            href = a["href"]
+            if not any(x in href for x in activity_types):
+                continue
+
+            activity_url = self._absolute_url(href)
+            if activity_url in seen:
+                continue
+            seen.add(activity_url)
+
+            cls = " ".join(li.get("class", []))
+            tm = re.search(r"modtype_(\w+)", cls)
+            materials.append({
+                "name": self._get_activity_name(li) or a.get_text(strip=True) or "Material",
+                "type": tm.group(1) if tm else "resource",
+                "activity_url": activity_url,
+            })
+
+        return {"course_name": course_name, "materials": materials}
+
+    def resolve_material_url(self, activity_url: str) -> dict | str:
+        """Resolve an LMS activity page to the underlying downloadable file URL."""
+        if not self.logged_in:
+            return "Not logged in."
+        if not self._is_mydy_url(activity_url):
+            return "Unsupported download URL."
+
+        direct_exts = (".pdf", ".ppt", ".pptx", ".docx", ".doc", ".xlsx", ".csv")
+        if "pluginfile.php" in activity_url or urlparse(activity_url).path.lower().endswith(direct_exts):
+            return {"url": activity_url, "source": "direct"}
+
+        self._rate_limit("activity")
+        try:
+            resp = self.session.get(activity_url)
+            if resp.status_code != 200:
+                return f"Activity returned status {resp.status_code}"
+        except requests.RequestException as e:
+            return f"Network error: {e}"
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if "pluginfile.php" in href or urlparse(href).path.lower().endswith(direct_exts):
+                return {"url": self._absolute_url(href), "source": "direct"}
+
+        for pdf_url in re.findall(r"PDFFile\s*:\s*'([^']+)'", resp.text):
+            return {"url": self._absolute_url(pdf_url), "source": "flexpaper"}
+
+        iframe = soup.find("iframe", id="presentationobject")
+        if iframe and iframe.has_attr("src"):
+            return {"url": self._absolute_url(iframe["src"]), "source": "iframe"}
+
+        obj = soup.find("object", id="presentationobject")
+        if obj and obj.has_attr("data"):
+            return {"url": self._absolute_url(obj["data"]), "source": "object"}
+
+        return "No downloadable file found for this activity."
+
+    def open_material_stream(self, activity_url: str) -> dict | str:
+        """Open a streaming HTTP response for a downloadable LMS material."""
+        resolved = self.resolve_material_url(activity_url)
+        if isinstance(resolved, str):
+            return resolved
+
+        file_url = resolved["url"]
+        if not self._is_mydy_url(file_url):
+            return "Unsupported download URL."
+
+        try:
+            self._rate_limit("download")
+            resp = self.session.get(file_url, stream=True)
+            if resp.status_code != 200:
+                return f"Download returned status {resp.status_code}"
+        except requests.RequestException as e:
+            return f"Network error: {e}"
+
+        return {
+            "response": resp,
+            "filename": self._filename_from_response(resp, file_url),
+            "source": resolved.get("source", "direct"),
+        }
 
     def download_course_materials(self, course: dict, base_dir: str = ".",
                                   progress_callback=None) -> dict:

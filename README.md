@@ -1,6 +1,6 @@
-# MyDy LMS Helper
+# LMS Buddy
 
-A terminal UI application and MCP server for interacting with the MyDy (Moodle-based) LMS at D.Y. Patil institutions. View attendance, browse courses, check assignments and grades, read announcements, and download course materials.
+A clean web app, terminal UI, and MCP server for interacting with the MyDy (Moodle-based) LMS at D.Y. Patil institutions. View attendance, browse courses, check assignments and grades, read announcements, and download course materials.
 
 ## Screenshots
 <img width="2446" height="1466" alt="MyDy_LMS_Helper_2026-03-21T02_48_44_883104" src="https://github.com/user-attachments/assets/698580e6-2893-40e2-b863-b1b06dd753a7" />
@@ -13,19 +13,59 @@ A terminal UI application and MCP server for interacting with the MyDy (Moodle-b
 
 ## Features
 
+- **LMS Buddy Web App** — Light, responsive browser UI for students
 - **Dashboard** — Attendance summary + current semester courses at a glance
 - **Course Detail** — Tabbed view with Content, Assignments, Grades, and Announcements
-- **Download Materials** — Download from a single course or bulk download from multiple
+- **Download Materials** — Proxy course material downloads through the app API
 - **Login Screen** — Auto-login from `.env` or manual login via the UI
 - **MCP Server** — Let AI assistants interact with your LMS
 
 ## Setup
 
-### 1. Clone and install
+### Web app
 
 ```sh
-git clone https://github.com/your-username/mydy-lms-helper.git
-cd mydy-lms-helper
+npm install
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+For local Vercel-style API + frontend development:
+
+```sh
+npx vercel dev
+```
+
+For a production frontend build:
+
+```sh
+npm run build
+```
+
+To run the full app locally without the Vercel CLI:
+
+```sh
+npm run local
+```
+
+The web app stores credentials in browser `localStorage` after login. Use the logout button to clear them. This is convenient for personal use, but do not use it on shared or untrusted machines.
+
+### Deploy to Vercel
+
+This repo includes `vercel.json`. Vercel will build the React app from `web/` and serve Python API functions from `api/`.
+
+```sh
+vercel
+```
+
+Downloads are proxied through the API so users can download from LMS Buddy without separately logging into MyDy in the browser. Large files and bulk usage can consume Vercel bandwidth and may hit serverless limits.
+
+### Terminal app
+
+```sh
+git clone https://github.com/kry0sc0pic/mydy-lms-scraper.git
+cd mydy-lms-scraper
 python -m venv .venv
 source .venv/bin/activate  # Linux/Mac
 # .venv\Scripts\activate   # Windows
@@ -33,7 +73,7 @@ uv pip install -r requirements.txt
 # or: pip install -r requirements.txt
 ```
 
-### 2. Configure credentials (optional)
+### Configure terminal credentials (optional)
 
 Create a `.env` file:
 ```
@@ -43,7 +83,7 @@ MYDY_PASSWORD="***REMOVED***"
 
 If no `.env` is present, the app will show a login screen on startup.
 
-### 3. Run the TUI
+### Run the TUI
 
 ```sh
 python __main__.py
@@ -106,12 +146,16 @@ claude mcp add mydy-lms -e MYDY_USERNAME=your_email@dypatil.edu -e MYDY_PASSWORD
 ## Project Structure
 
 ```
-mydy-lms-helper/
+mydy-lms-scraper/
+├── api/              # Vercel Python API functions for LMS Buddy
+├── web/              # React frontend for LMS Buddy
 ├── __main__.py       # Entry point
 ├── app.py            # Textual TUI application
 ├── client.py         # HTTP client (shared by TUI and MCP server)
 ├── mcp_server.py     # MCP server for AI assistants
 ├── requirements.txt  # Dependencies
+├── package.json      # Web app dependencies and scripts
+├── vercel.json       # Vercel build and routing config
 └── .env              # Credentials (gitignored)
 ```
 
