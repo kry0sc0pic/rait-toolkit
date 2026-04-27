@@ -1161,12 +1161,14 @@ function GeneralUtils({
 
             let buttonLabel: string;
             if (busy) buttonLabel = "Maxxing...";
+            else if (snapshotLoading) buttonLabel = "Loading...";
             else if (atFullHitRate || showJustMaxxed) buttonLabel = "MAXXED";
             else buttonLabel = "Start maxxing";
 
             const buttonClasses = ["hitrate-button"];
             if (busy) buttonClasses.push("hitrate-button--glowing");
             if (atFullHitRate || showJustMaxxed) buttonClasses.push("hitrate-button--maxxed");
+            else if (snapshotLoading) buttonClasses.push("hitrate-button--maxxed");
             else if (!busy) buttonClasses.push("hitrate-button--incomplete");
 
             return (
@@ -1190,7 +1192,7 @@ function GeneralUtils({
                 <button
                   className={buttonClasses.join(" ")}
                   type="button"
-                  disabled={Boolean(loadingId) || atFullHitRate || showJustMaxxed}
+                  disabled={Boolean(loadingId) || atFullHitRate || showJustMaxxed || snapshotLoading}
                   onClick={() => void runMaxx(item)}
                 >
                   {buttonLabel}
