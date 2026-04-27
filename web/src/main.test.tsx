@@ -331,20 +331,19 @@ describe("LMS Buddy", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Select subject")).not.toBeInTheDocument();
-    const hitrateButton = await screen.findByRole("button", { name: "Maxxing" });
+    const hitrateButton = await screen.findByRole("button", { name: "Start maxxing" });
     await waitFor(() => {
-      expect(hitrateButton.closest("article")).toHaveTextContent("Hit rate 75%");
+      expect(hitrateButton.closest("article")).toHaveTextContent("75%");
     });
     expect(hitrateButton).toBeEnabled();
     await userEvent.click(hitrateButton);
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "100% hit rate" })).toBeDisabled();
-    });
-    expect(screen.getByRole("button", { name: "100% hit rate" }).closest("article")).toHaveTextContent("Hit rate 100%");
+    const maxxedBtn = await screen.findByRole("button", { name: "MAXXED" });
+    expect(maxxedBtn).toBeDisabled();
+    expect(maxxedBtn.closest("article")).toHaveTextContent("100%");
     expect(screen.getByText(/1 marked/)).toBeInTheDocument();
   });
 
-  it("disables maxxing at 100% hit rate when snapshot reports full completion", async () => {
+  it("shows MAXXED disabled when snapshot already reports full completion", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -372,9 +371,9 @@ describe("LMS Buddy", () => {
     await userEvent.type(screen.getByPlaceholderText("Password"), credentials.password);
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
     await userEvent.click(await screen.findByRole("button", { name: "Tools" }));
-    const fullBtn = await screen.findByRole("button", { name: "100% hit rate" });
+    const fullBtn = await screen.findByRole("button", { name: "MAXXED" });
     await waitFor(() => {
-      expect(fullBtn.closest("article")).toHaveTextContent("Hit rate 100%");
+      expect(fullBtn.closest("article")).toHaveTextContent("100%");
     });
     expect(fullBtn).toBeDisabled();
   });

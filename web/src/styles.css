@@ -321,23 +321,6 @@ input:focus {
   color: var(--hitrate-high);
 }
 
-.hitrate-pct-line {
-  margin: 0.35rem 0 0.2rem;
-  font-size: 0.82rem;
-  color: var(--ink);
-}
-
-.hitrate-pct-line strong {
-  font-family: "Instrument Serif", Georgia, serif;
-  font-size: 1.05rem;
-  font-weight: 400;
-  color: var(--accent);
-}
-
-.hitrate-pct-line--high strong {
-  color: var(--hitrate-high);
-}
-
 .stat-card,
 .panel {
   border-radius: 28px;
@@ -629,35 +612,40 @@ input:focus {
   box-shadow: 0 12px 28px rgba(194, 58, 43, 0.28);
 }
 
+.hitrate-button.hitrate-button--maxxed {
+  background: #d8cbc6;
+  color: #463833;
+  cursor: default;
+  opacity: 0.85;
+  letter-spacing: 0.06em;
+}
+
 .hitrate-button--glowing {
   border: 0;
-  background: linear-gradient(145deg, #e0493a, #c23a2b);
+  background: linear-gradient(145deg, #d43828, #b83224);
   color: #fff;
-  animation: hitrateGlowPulse 1.05s ease-in-out infinite;
+  animation: hitrateGlowPulse 1.4s ease-in-out infinite;
   box-shadow:
-    0 0 0 1px rgba(194, 58, 43, 0.45),
-    0 0 22px rgba(194, 58, 43, 0.55),
-    0 0 44px rgba(194, 58, 43, 0.22);
+    0 0 0 1px rgba(194, 58, 43, 0.3),
+    0 0 14px rgba(194, 58, 43, 0.32);
 }
 
 .hitrate-button--glowing:hover:not(:disabled) {
   transform: none;
-  background: linear-gradient(145deg, #e0493a, #c23a2b);
+  background: linear-gradient(145deg, #d43828, #b83224);
 }
 
 @keyframes hitrateGlowPulse {
   0%,
   100% {
     box-shadow:
-      0 0 0 1px rgba(194, 58, 43, 0.4),
-      0 0 18px rgba(194, 58, 43, 0.45),
-      0 0 36px rgba(194, 58, 43, 0.18);
+      0 0 0 1px rgba(194, 58, 43, 0.25),
+      0 0 10px rgba(194, 58, 43, 0.28);
   }
   50% {
     box-shadow:
-      0 0 0 1px rgba(194, 58, 43, 0.55),
-      0 0 28px rgba(194, 58, 43, 0.65),
-      0 0 52px rgba(194, 58, 43, 0.32);
+      0 0 0 1px rgba(194, 58, 43, 0.4),
+      0 0 18px rgba(194, 58, 43, 0.42);
   }
 }
 

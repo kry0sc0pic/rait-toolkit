@@ -1032,6 +1032,16 @@ function GeneralUtils({
   const [animatingCourseId, setAnimatingCourseId] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [liveMetrics, setLiveMetrics] = useState<Record<string, HitrateCourseResult | { error: string }>>({});
+  const [justMaxxedId, setJustMaxxedId] = useState<string | null>(null);
+  const justMaxxedTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (justMaxxedTimerRef.current !== null) {
+        window.clearTimeout(justMaxxedTimerRef.current);
+      }
+    };
+  }, []);
 
   const courseListKey = currentCourses.map((c) => c.course.id).join(",");
 
@@ -1066,6 +1076,7 @@ function GeneralUtils({
     setAnimatingCourseId(null);
     window.setTimeout(() => setAnimatingCourseId(item.course.id), 0);
     setLoadingId(item.course.id);
+    let succeeded = false;
     try {
       const data = await postJson<HitrateCourseResult>("/api/hitrate", {
         ...credentials,
@@ -1074,6 +1085,7 @@ function GeneralUtils({
       });
       setLiveMetrics((r) => ({ ...r, [item.course.id]: data }));
       writeHitrateCachePct(credentials.username, item.course.id, hitRatePctFromResult(data));
+      succeeded = true;
     } catch (err) {
       setLiveMetrics((r) => ({
         ...r,
@@ -1082,6 +1094,16 @@ function GeneralUtils({
     } finally {
       setLoadingId(null);
       window.setTimeout(() => setAnimatingCourseId(null), 1100);
+      if (succeeded) {
+        setJustMaxxedId(item.course.id);
+        if (justMaxxedTimerRef.current !== null) {
+          window.clearTimeout(justMaxxedTimerRef.current);
+        }
+        justMaxxedTimerRef.current = window.setTimeout(() => {
+          setJustMaxxedId((current) => (current === item.course.id ? null : current));
+          justMaxxedTimerRef.current = null;
+        }, 2200);
+      }
     }
   };
 
@@ -1117,7 +1139,18 @@ function GeneralUtils({
             const busy = loadingId === item.course.id;
             const atFullHitRate = hitRatePct >= 100;
             const highHitRate = hitRatePct > 80;
-            const showIncompleteButton = !busy && !atFullHitRate;
+            const showJustMaxxed = justMaxxedId === item.course.id && !busy;
+
+            let buttonLabel: string;
+            if (busy) buttonLabel = "Maxxing...";
+            else if (atFullHitRate || showJustMaxxed) buttonLabel = "MAXXED";
+            else buttonLabel = "Start maxxing";
+
+            const buttonClasses = ["hitrate-button"];
+            if (busy) buttonClasses.push("hitrate-button--glowing");
+            if (atFullHitRate || showJustMaxxed) buttonClasses.push("hitrate-button--maxxed");
+            else if (!busy) buttonClasses.push("hitrate-button--incomplete");
+
             return (
               <article
                 className={`utility-course-card hitrate-card ${
@@ -1128,9 +1161,6 @@ function GeneralUtils({
                 <CircularDial value={hitRatePct} successTone={highHitRate} />
                 <div>
                   <strong>{item.attendance.subject}</strong>
-                  <p className={`hitrate-pct-line${highHitRate ? " hitrate-pct-line--high" : ""}`}>
-                    Hit rate <strong>{`${hitRatePct}%`}</strong>
-                  </p>
                   {data?.success && (
                     <small>
                       {data.marked ?? 0} marked · {data.skipped ?? 0} already done
@@ -1140,12 +1170,12 @@ function GeneralUtils({
                   {err && <small className="hitrate-error">{err}</small>}
                 </div>
                 <button
-                  className={`hitrate-button ${busy ? "hitrate-button--glowing" : ""} ${showIncompleteButton ? "hitrate-button--incomplete" : ""}`}
+                  className={buttonClasses.join(" ")}
                   type="button"
-                  disabled={Boolean(loadingId) || atFullHitRate}
+                  disabled={Boolean(loadingId) || atFullHitRate || showJustMaxxed}
                   onClick={() => void runMaxx(item)}
                 >
-                  {busy ? "Maxxing…" : atFullHitRate ? "100% hit rate" : "Maxxing"}
+                  {buttonLabel}
                 </button>
               </article>
             );
