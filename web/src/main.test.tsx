@@ -98,7 +98,7 @@ describe("LMS Buddy", () => {
 
     render(<App />);
 
-    expect(screen.getByText("Login with your DYPU email ID. All data is stored locally in your browser.")).toBeInTheDocument();
+    expect(screen.getByText("Login with LMS credentials. All data is stored locally in your browser.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Deeptanshu" })).toHaveAttribute("href", "https://github.com/Deeptanshuu");
     await userEvent.type(screen.getByPlaceholderText("Username / Email"), credentials.username);
     await userEvent.type(screen.getByPlaceholderText("Password"), credentials.password);

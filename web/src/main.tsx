@@ -689,7 +689,7 @@ export function App() {
         <section className="login-card">
           <p className="eyebrow">MyDy helper</p>
           <h1>LMS Buddy</h1>
-          <p className="muted">Login with your DYPU email ID. All data is stored locally in your browser.</p>
+          <p className="muted">Login with LMS credentials. All data is stored locally in your browser.</p>
           <form onSubmit={handleLogin} className="login-form">
             <input
               placeholder="Username / Email"
