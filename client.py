@@ -765,101 +765,108 @@ class MydyClient:
 
     # -- hit rate maxxer ---------------------------------------------------
     #
-    # Marks activities as "completed" via the legacy Moodle togglecompletion
-    # endpoint. Verified against mydy.dypatil.edu:
-    #   POST /rait/course/togglecompletion.php
-    #   form: id=<cmid>&sesskey=<10ch>&modulename=<name>&completionstate=1
-    # Only activities whose course-page tile contains a togglecompletion form
-    # (i.e. manual completion) can be flipped this way. Auto-completion items
-    # (quiz pass / forum post) cannot.
+    # Brings a course's "Course Progress" widget to 100% by GET-ing every
+    # not-yet-viewed activity. The widget's data source is customview.php,
+    # which lists each activity link with class="completed" or class="pending".
+    # A simple GET on a "pending" /mod/<type>/view.php?id=N flips it to
+    # "completed" and bumps the Viewed counter by 1. Verified live.
 
-    @staticmethod
-    def _extract_sesskey(text: str) -> str | None:
-        m = re.search(r'"sesskey":"([^"]+)"', text) or re.search(r"sesskey=([A-Za-z0-9]+)", text)
-        return m.group(1) if m else None
+    def get_course_progress(self, course_id: str) -> dict:
+        """Read-only: viewed/total/percent state for one course's progress widget.
 
-    @staticmethod
-    def _parse_togglecompletion_forms(soup: BeautifulSoup) -> list[dict]:
-        """Return manual-completion activities on the course page."""
-        out: list[dict] = []
-        for li in soup.find_all("li", class_=re.compile(r"\bactivity\b")):
-            form = li.find("form", class_=re.compile(r"togglecompletion"))
-            if not form:
-                continue
-            inputs = {
-                inp.get("name"): inp.get("value", "")
-                for inp in form.find_all("input")
-                if inp.get("name")
+        Returns:
+            {
+              "total": int, "viewed": int, "not_viewed": int, "percent": int,
+              "pending":   [{"url", "name"}, ...],   # not yet viewed
+              "completed": [{"url", "name"}, ...],   # already viewed
             }
-            cmid = inputs.get("id") or ""
-            if not cmid:
-                continue
-            out.append(
-                {
-                    "cmid": cmid,
-                    "sesskey": inputs.get("sesskey", ""),
-                    "modulename": inputs.get("modulename", ""),
-                    "completionstate": inputs.get("completionstate", "1"),
-                    "name": MydyClient._get_activity_name(li),
-                }
-            )
-        return out
-
-    def mark_activity_complete(
-        self, cmid: str, sesskey: str, modulename: str = ""
-    ) -> dict:
+        """
         if not self.logged_in:
-            return {"cmid": cmid, "status": "error", "error": "Not logged in."}
-        self._rate_limit("activity")
-        try:
-            resp = self.session.post(
-                f"{RAIT_URL}/course/togglecompletion.php",
-                data={
-                    "id": cmid,
-                    "sesskey": sesskey,
-                    "modulename": modulename,
-                    "completionstate": "1",
-                },
-                allow_redirects=True,
-            )
-            ok = resp.status_code in (200, 302, 303)
-            return {
-                "cmid": cmid,
-                "modulename": modulename,
-                "status": "marked" if ok else "error",
-                "http_status": resp.status_code,
-            }
-        except requests.RequestException as e:
-            return {
-                "cmid": cmid,
-                "modulename": modulename,
-                "status": "error",
-                "error": str(e),
-            }
-
-    def hit_rate_snapshot_course(self, course: dict) -> dict:
-        """Read-only: current manual-completion coverage from the course page (no POST)."""
-        if not self.logged_in:
-            return {"course_name": course.get("name", ""), "error": "Not logged in."}
+            return {"error": "Not logged in."}
         self._rate_limit("course")
         try:
-            resp = self.session.get(course["url"])
-            soup = BeautifulSoup(resp.text, "html.parser")
+            resp = self.session.get(
+                f"{RAIT_URL}/course/customview.php?id={course_id}"
+            )
         except requests.RequestException as e:
-            return {"course_name": course.get("name", ""), "error": str(e)}
+            return {"error": str(e)}
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-        course_name = self._extract_course_name(soup)
-        forms = self._parse_togglecompletion_forms(soup)
-        skipped_count = sum(1 for f in forms if f["completionstate"] == "0")
-        manual = len(forms)
+        pending: list[dict] = []
+        completed: list[dict] = []
+        for a in soup.find_all("a", class_=True):
+            cls = a.get("class") or []
+            if "pending" not in cls and "completed" not in cls:
+                continue
+            href = a.get("href", "")
+            if "/mod/" not in href or "/view.php" not in href:
+                continue
+            div = a.find("div")
+            text = (
+                div.get_text(separator=" ", strip=True)
+                if div else a.get_text(strip=True)
+            )
+            name = re.sub(r"\s+", " ", text.replace("\xa0", " ")).strip() or "Activity"
+            item = {"url": href, "name": name}
+            (completed if "completed" in cls else pending).append(item)
+
+        total = len(pending) + len(completed)
+        return {
+            "total": total,
+            "viewed": len(completed),
+            "not_viewed": len(pending),
+            "percent": round(len(completed) / total * 100) if total else 0,
+            "pending": pending,
+            "completed": completed,
+        }
+
+    @staticmethod
+    def _course_id_from(course: dict) -> str:
+        cid = str(course.get("id") or "")
+        if cid:
+            return cid
+        m = re.search(r"id=(\d+)", course.get("url", ""))
+        return m.group(1) if m else ""
+
+    def mark_activity_viewed(self, url: str) -> dict:
+        """GET an activity's view.php URL — this is what increments the widget."""
+        if not self.logged_in:
+            return {"url": url, "status": "error", "error": "Not logged in."}
+        self._rate_limit("activity")
+        try:
+            r = self.session.get(url, allow_redirects=True)
+            ok = r.status_code in (200, 302, 303)
+            return {
+                "url": url,
+                "status": "marked" if ok else "error",
+                "http_status": r.status_code,
+            }
+        except requests.RequestException as e:
+            return {"url": url, "status": "error", "error": str(e)}
+
+    def hit_rate_snapshot_course(self, course: dict) -> dict:
+        """Read-only: current Course Progress widget state for one course."""
+        if not self.logged_in:
+            return {"course_name": course.get("name", ""), "error": "Not logged in."}
+        cid = self._course_id_from(course)
+        if not cid:
+            return {"course_name": course.get("name", ""), "error": "Course id not found."}
+
+        progress = self.get_course_progress(cid)
+        if "error" in progress:
+            return {"course_name": course.get("name", ""), "error": progress["error"]}
 
         return {
-            "course_name": course_name,
-            "manual_activities": manual,
+            "course_name": course.get("name", ""),
+            "total": progress["total"],
+            "viewed": progress["viewed"],
+            "not_viewed": progress["not_viewed"],
+            "percent": progress["percent"],
+            "manual_activities": progress["total"],
             "marked": 0,
-            "skipped": skipped_count,
+            "skipped": progress["viewed"],
             "failed": 0,
-            "items": {"marked": [], "skipped": [], "failed": []},
+            "items": {"marked": [], "skipped": progress["completed"], "failed": []},
         }
 
     def hit_rate_snapshot_courses(self, courses: list[dict]) -> dict:
@@ -868,90 +875,69 @@ class MydyClient:
             return {"error": "Not logged in."}
         results: dict[str, dict] = {}
         for course in courses:
-            cid = str(course.get("id") or "")
+            cid = self._course_id_from(course)
             if not cid:
                 continue
             results[cid] = self.hit_rate_snapshot_course(course)
         return {"courses": results}
 
     def hit_rate_maxx_course(self, course: dict, progress_callback=None) -> dict:
-        """Mark every manual-completion activity on a single course as completed."""
+        """Bring one course's Course Progress widget to 100%.
+
+        GETs every activity in the course's "pending" set (per customview.php).
+        Already-viewed activities are not touched. Returns before/after counts.
+        """
         if not self.logged_in:
             return {"course_name": course.get("name", ""), "error": "Not logged in."}
-        self._rate_limit("course")
-        try:
-            resp = self.session.get(course["url"])
-            soup = BeautifulSoup(resp.text, "html.parser")
-        except requests.RequestException as e:
-            return {"course_name": course.get("name", ""), "error": str(e)}
+        cid = self._course_id_from(course)
+        if not cid:
+            return {"course_name": course.get("name", ""), "error": "Course id not found."}
 
-        course_name = self._extract_course_name(soup)
-        forms = self._parse_togglecompletion_forms(soup)
-        page_sesskey = self._extract_sesskey(resp.text)
+        progress = self.get_course_progress(cid)
+        if "error" in progress:
+            return {"course_name": course.get("name", ""), "error": progress["error"]}
+
+        pending = progress["pending"]
+        if progress_callback:
+            progress_callback("course_start", {
+                "course": course.get("name", ""),
+                "total": progress["total"],
+                "viewed_before": progress["viewed"],
+                "pending_count": len(pending),
+                "percent_before": progress["percent"],
+            })
 
         marked: list[dict] = []
-        skipped: list[dict] = []
         failed: list[dict] = []
-
-        for i, f in enumerate(forms):
+        for i, item in enumerate(pending):
             if progress_callback:
-                progress_callback(
-                    "activity",
-                    {
-                        "index": i + 1,
-                        "total": len(forms),
-                        "name": f["name"],
-                        "cmid": f["cmid"],
-                    },
-                )
-            if f["completionstate"] == "0":
-                skipped.append(
-                    {
-                        "cmid": f["cmid"],
-                        "name": f["name"],
-                        "reason": "already_complete",
-                    }
-                )
-                if progress_callback:
-                    progress_callback("item_done", {"name": f["name"], "status": "skipped"})
-                continue
-
-            sesskey = f["sesskey"] or page_sesskey or ""
-            if not sesskey:
-                failed.append(
-                    {
-                        "cmid": f["cmid"],
-                        "name": f["name"],
-                        "error": "no_sesskey",
-                    }
-                )
-                if progress_callback:
-                    progress_callback(
-                        "item_done",
-                        {
-                            "name": f["name"],
-                            "status": "error",
-                            "error": "no_sesskey",
-                        },
-                    )
-                continue
-
-            r = self.mark_activity_complete(f["cmid"], sesskey, f["modulename"])
-            r["name"] = f["name"]
-            if r.get("status") == "marked":
-                marked.append(r)
-            else:
-                failed.append(r)
+                progress_callback("activity", {
+                    "index": i + 1, "total": len(pending),
+                    "name": item["name"], "url": item["url"],
+                })
+            r = self.mark_activity_viewed(item["url"])
+            r["name"] = item["name"]
+            (marked if r.get("status") == "marked" else failed).append(r)
             if progress_callback:
                 progress_callback("item_done", r)
 
+        after = self.get_course_progress(cid)
         return {
-            "course_name": course_name,
-            "manual_activities": len(forms),
+            "course_name": course.get("name", ""),
+            "total": progress["total"],
+            "viewed_before": progress["viewed"],
+            "viewed_after": after.get("viewed", progress["viewed"] + len(marked)),
+            "percent_before": progress["percent"],
+            "percent_after": after.get("percent", 0),
+            "manual_activities": progress["total"],
             "marked": len(marked),
-            "skipped": len(skipped),
+            "skipped": progress["viewed"],
             "failed": len(failed),
-            "items": {"marked": marked, "skipped": skipped, "failed": failed},
+            "items": {
+                "marked": marked,
+                "skipped": progress["completed"],
+                "failed": failed,
+            },
         }
 
     def hit_rate_maxx_all(
