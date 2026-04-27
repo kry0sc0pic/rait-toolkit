@@ -656,6 +656,11 @@ input:focus {
   font-size: 0.72rem;
 }
 
+.hitrate-loading {
+  color: var(--accent);
+  font-weight: 500;
+}
+
 .soon-tag {
   display: inline-flex;
   align-items: center;

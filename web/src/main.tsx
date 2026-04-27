@@ -1032,6 +1032,7 @@ function GeneralUtils({
   const [animatingCourseId, setAnimatingCourseId] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [liveMetrics, setLiveMetrics] = useState<Record<string, HitrateCourseResult | { error: string }>>({});
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
   const [justMaxxedId, setJustMaxxedId] = useState<string | null>(null);
   const justMaxxedTimerRef = useRef<number | null>(null);
 
@@ -1048,9 +1049,10 @@ function GeneralUtils({
   useEffect(() => {
     if (!courseListKey || !credentials.username) return;
     let cancelled = false;
+    setSnapshotLoading(true);
     void (async () => {
       try {
-        const batch = await postJson<{ courses: Record<string, HitrateCourseResult> }>(
+        const batch = await postJson<{ courses: Record<string, HitrateCourseResult & { error?: string }> }>(
           "/api/hitrate-status",
           {
             ...credentials,
@@ -1064,6 +1066,10 @@ function GeneralUtils({
         setLiveMetrics((prev) => {
           const next = { ...prev };
           for (const [courseId, row] of Object.entries(batch.courses)) {
+            if (row?.error || typeof row?.manual_activities !== "number") {
+              next[courseId] = { error: row?.error || "Snapshot unavailable." };
+              continue;
+            }
             const enriched: HitrateCourseResult = { ...row, success: true };
             next[courseId] = enriched;
             writeHitrateCachePct(credentials.username, courseId, hitRatePctFromResult(enriched));
@@ -1072,10 +1078,13 @@ function GeneralUtils({
         });
       } catch {
         // Keep showing cached % until a future load succeeds.
+      } finally {
+        if (!cancelled) setSnapshotLoading(false);
       }
     })();
     return () => {
       cancelled = true;
+      setSnapshotLoading(false);
     };
   }, [courseListKey, credentials.username, credentials.password]);
 
@@ -1134,8 +1143,9 @@ function GeneralUtils({
         <span>Current courses only</span>
       </div>
       <p className="muted">
-        Marks activities that use manual completion on the course page (Moodle checkboxes) via the LMS completion API. Quizzes, forums, and items without
-        manual completion are skipped. It may not reach 100% depending on what faculty enabled.
+        Reads each course&rsquo;s Course Progress widget from MyDy and brings it to 100% by visiting every pending activity. Maxxing only counts towards activities the
+        widget tracks.
+        {snapshotLoading && <span className="hitrate-loading"> · Loading live percentages…</span>}
       </p>
       {currentCourses.length ? (
         <div className="subject-grid">
