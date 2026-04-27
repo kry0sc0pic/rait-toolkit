@@ -8,6 +8,17 @@ except ImportError:
 COURSE_VIEW = "https://mydy.dypatil.edu/rait/course/view.php"
 
 
+def _course_obj(item: dict) -> dict | None:
+    cid = str(item.get("course_id") or item.get("id") or "").strip()
+    if not cid:
+        return None
+    return {
+        "id": cid,
+        "name": (item.get("course_name") or item.get("name") or "").strip(),
+        "url": f"{COURSE_VIEW}?id={cid}",
+    }
+
+
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         send_options(self)
@@ -15,8 +26,25 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             payload = read_json(self)
-            course_id = (payload.get("course_id") or "").strip()
-            if not course_id:
+
+            courses_payload = payload.get("courses")
+            if isinstance(courses_payload, list):
+                resolved = [c for c in (_course_obj(item) for item in courses_payload) if c]
+                if not resolved:
+                    send_json(self, 400, safe_error("courses list is required."))
+                    return
+
+                client, login = client_from_payload(payload)
+                if client is None:
+                    send_json(self, 401, login)
+                    return
+
+                batch = client.hit_rate_snapshot_courses(resolved)
+                send_json(self, 200, {"success": True, **batch})
+                return
+
+            single = _course_obj(payload)
+            if single is None:
                 send_json(self, 400, safe_error("course_id is required."))
                 return
 
@@ -25,12 +53,7 @@ class handler(BaseHTTPRequestHandler):
                 send_json(self, 401, login)
                 return
 
-            course = {
-                "id": course_id,
-                "name": (payload.get("course_name") or "").strip(),
-                "url": f"{COURSE_VIEW}?id={course_id}",
-            }
-            result = client.hit_rate_snapshot_course(course)
+            result = client.hit_rate_snapshot_course(single)
             err = result.get("error")
             if err:
                 send_json(self, 200, {**safe_error(str(err)), "course_name": result.get("course_name", "")})

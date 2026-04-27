@@ -1049,22 +1049,30 @@ function GeneralUtils({
     if (!courseListKey || !credentials.username) return;
     let cancelled = false;
     void (async () => {
-      await Promise.all(
-        currentCourses.map(async (item) => {
-          try {
-            const data = await postJson<HitrateCourseResult>("/api/hitrate-status", {
-              ...credentials,
+      try {
+        const batch = await postJson<{ courses: Record<string, HitrateCourseResult> }>(
+          "/api/hitrate-status",
+          {
+            ...credentials,
+            courses: currentCourses.map((item) => ({
               course_id: item.course.id,
               course_name: item.course.name,
-            });
-            if (cancelled) return;
-            setLiveMetrics((prev) => ({ ...prev, [item.course.id]: data }));
-            writeHitrateCachePct(credentials.username, item.course.id, hitRatePctFromResult(data));
-          } catch {
-            // Keep showing cached % until a future load succeeds.
+            })),
+          },
+        );
+        if (cancelled || !batch?.courses) return;
+        setLiveMetrics((prev) => {
+          const next = { ...prev };
+          for (const [courseId, row] of Object.entries(batch.courses)) {
+            const enriched: HitrateCourseResult = { ...row, success: true };
+            next[courseId] = enriched;
+            writeHitrateCachePct(credentials.username, courseId, hitRatePctFromResult(enriched));
           }
-        }),
-      );
+          return next;
+        });
+      } catch {
+        // Keep showing cached % until a future load succeeds.
+      }
     })();
     return () => {
       cancelled = true;

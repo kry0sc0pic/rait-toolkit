@@ -271,12 +271,16 @@ describe("LMS Buddy", () => {
         if (url === "/api/hitrate-status") {
           return jsonResponse({
             success: true,
-            course_name: "Machine Learning",
-            manual_activities: 4,
-            marked: 0,
-            skipped: 3,
-            failed: 0,
-            items: { marked: [], skipped: [], failed: [] },
+            courses: {
+              "101": {
+                course_name: "Machine Learning",
+                manual_activities: 4,
+                marked: 0,
+                skipped: 3,
+                failed: 0,
+                items: { marked: [], skipped: [], failed: [] },
+              },
+            },
           });
         }
         if (url === "/api/hitrate") {
@@ -353,12 +357,16 @@ describe("LMS Buddy", () => {
         if (url === "/api/hitrate-status") {
           return jsonResponse({
             success: true,
-            course_name: "Machine Learning",
-            manual_activities: 4,
-            marked: 0,
-            skipped: 4,
-            failed: 0,
-            items: { marked: [], skipped: [], failed: [] },
+            courses: {
+              "101": {
+                course_name: "Machine Learning",
+                manual_activities: 4,
+                marked: 0,
+                skipped: 4,
+                failed: 0,
+                items: { marked: [], skipped: [], failed: [] },
+              },
+            },
           });
         }
         throw new Error(`Unexpected request: ${url}`);

@@ -862,6 +862,18 @@ class MydyClient:
             "items": {"marked": [], "skipped": [], "failed": []},
         }
 
+    def hit_rate_snapshot_courses(self, courses: list[dict]) -> dict:
+        """Snapshot coverage for many courses using one logged-in session."""
+        if not self.logged_in:
+            return {"error": "Not logged in."}
+        results: dict[str, dict] = {}
+        for course in courses:
+            cid = str(course.get("id") or "")
+            if not cid:
+                continue
+            results[cid] = self.hit_rate_snapshot_course(course)
+        return {"courses": results}
+
     def hit_rate_maxx_course(self, course: dict, progress_callback=None) -> dict:
         """Mark every manual-completion activity on a single course as completed."""
         if not self.logged_in:
