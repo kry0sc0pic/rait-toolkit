@@ -38,14 +38,38 @@ def send_options(request_handler) -> None:
     request_handler.end_headers()
 
 
+PORTAL_DEAD_MESSAGE = "MyDy LMS portal is dead. Try again later."
+
+
+def _is_portal_down(result: dict) -> bool:
+    """True if the failure looks like the LMS itself being broken (vs bad creds)."""
+    message = (result.get("message") or "").lower()
+    return (
+        "lms may be down" in message
+        or "network error" in message
+        or "login result unclear" in message
+        or "returned status" in message
+    )
+
+
 def client_from_payload(payload: dict) -> tuple[MydyClient | None, dict]:
     username = (payload.get("username") or "").strip()
     password = payload.get("password") or ""
+
     client = MydyClient()
     result = client.login(username, password)
-    if not result.get("success"):
-        return None, result
-    return client, result
+    if result.get("success"):
+        return client, result
+
+    if _is_portal_down(result):
+        client = MydyClient()
+        result = client.login(username, password)
+        if result.get("success"):
+            return client, result
+        if _is_portal_down(result):
+            return None, {"success": False, "message": PORTAL_DEAD_MESSAGE, "portal_down": True}
+
+    return None, result
 
 
 def safe_error(message: str) -> dict:
