@@ -619,6 +619,16 @@ input:focus {
   opacity: 0.55;
 }
 
+.hitrate-button.hitrate-button--incomplete:not(:disabled) {
+  background: linear-gradient(145deg, #d43828, #b83224);
+  color: #fff;
+}
+
+.hitrate-button.hitrate-button--incomplete:not(:disabled):hover {
+  background: linear-gradient(145deg, #df4535, #c23a2b);
+  box-shadow: 0 12px 28px rgba(194, 58, 43, 0.28);
+}
+
 .hitrate-button--glowing {
   border: 0;
   background: linear-gradient(145deg, #e0493a, #c23a2b);

@@ -837,6 +837,31 @@ class MydyClient:
                 "error": str(e),
             }
 
+    def hit_rate_snapshot_course(self, course: dict) -> dict:
+        """Read-only: current manual-completion coverage from the course page (no POST)."""
+        if not self.logged_in:
+            return {"course_name": course.get("name", ""), "error": "Not logged in."}
+        self._rate_limit("course")
+        try:
+            resp = self.session.get(course["url"])
+            soup = BeautifulSoup(resp.text, "html.parser")
+        except requests.RequestException as e:
+            return {"course_name": course.get("name", ""), "error": str(e)}
+
+        course_name = self._extract_course_name(soup)
+        forms = self._parse_togglecompletion_forms(soup)
+        skipped_count = sum(1 for f in forms if f["completionstate"] == "0")
+        manual = len(forms)
+
+        return {
+            "course_name": course_name,
+            "manual_activities": manual,
+            "marked": 0,
+            "skipped": skipped_count,
+            "failed": 0,
+            "items": {"marked": [], "skipped": [], "failed": []},
+        }
+
     def hit_rate_maxx_course(self, course: dict, progress_callback=None) -> dict:
         """Mark every manual-completion activity on a single course as completed."""
         if not self.logged_in:

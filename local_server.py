@@ -10,6 +10,7 @@ from api.course import handler as CourseHandler
 from api.dashboard import handler as DashboardHandler
 from api.download import handler as DownloadHandler
 from api.hitrate import handler as HitrateHandler
+from api.hitrate_status import handler as HitrateStatusHandler
 from api.login import handler as LoginHandler
 
 
@@ -22,6 +23,7 @@ API_HANDLERS = {
     "/api/course": CourseHandler,
     "/api/download": DownloadHandler,
     "/api/hitrate": HitrateHandler,
+    "/api/hitrate-status": HitrateStatusHandler,
 }
 
 

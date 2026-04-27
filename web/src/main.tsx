@@ -94,6 +94,13 @@ type HitrateCourseResult = {
   message?: string;
 };
 
+function hitRatePctFromResult(row: HitrateCourseResult): number {
+  const total = row.manual_activities ?? 0;
+  if (!total) return 0;
+  const done = (row.marked ?? 0) + (row.skipped ?? 0);
+  return Math.min(100, Math.round((100 * done) / total));
+}
+
 type AppView = "courses" | "journal" | "general";
 
 type AppRoute = {
@@ -1024,14 +1031,35 @@ function GeneralUtils({
 }) {
   const [animatingCourseId, setAnimatingCourseId] = useState<string | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, HitrateCourseResult | { error: string }>>({});
+  const [liveMetrics, setLiveMetrics] = useState<Record<string, HitrateCourseResult | { error: string }>>({});
 
-  const hitratePercent = (row: HitrateCourseResult) => {
-    const total = row.manual_activities ?? 0;
-    if (!total) return 0;
-    const done = (row.marked ?? 0) + (row.skipped ?? 0);
-    return Math.min(100, Math.round((100 * done) / total));
-  };
+  const courseListKey = currentCourses.map((c) => c.course.id).join(",");
+
+  useEffect(() => {
+    if (!courseListKey || !credentials.username) return;
+    let cancelled = false;
+    void (async () => {
+      await Promise.all(
+        currentCourses.map(async (item) => {
+          try {
+            const data = await postJson<HitrateCourseResult>("/api/hitrate-status", {
+              ...credentials,
+              course_id: item.course.id,
+              course_name: item.course.name,
+            });
+            if (cancelled) return;
+            setLiveMetrics((prev) => ({ ...prev, [item.course.id]: data }));
+            writeHitrateCachePct(credentials.username, item.course.id, hitRatePctFromResult(data));
+          } catch {
+            // Keep showing cached % until a future load succeeds.
+          }
+        }),
+      );
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [courseListKey, credentials.username, credentials.password]);
 
   const runMaxx = async (item: CurrentSubjectCourse) => {
     if (loadingId) return;
@@ -1044,10 +1072,10 @@ function GeneralUtils({
         course_id: item.course.id,
         course_name: item.course.name,
       });
-      setResults((r) => ({ ...r, [item.course.id]: data }));
-      writeHitrateCachePct(credentials.username, item.course.id, hitratePercent(data));
+      setLiveMetrics((r) => ({ ...r, [item.course.id]: data }));
+      writeHitrateCachePct(credentials.username, item.course.id, hitRatePctFromResult(data));
     } catch (err) {
-      setResults((r) => ({
+      setLiveMetrics((r) => ({
         ...r,
         [item.course.id]: { error: err instanceof Error ? err.message : "Request failed." },
       }));
@@ -1058,12 +1086,12 @@ function GeneralUtils({
   };
 
   const displayHitRatePct = (courseId: string) => {
-    const row = results[courseId];
+    const row = liveMetrics[courseId];
     if (row && "error" in row) {
       return readHitrateCachePct(credentials.username, courseId);
     }
     const data = row && !("error" in row) && row.success ? row : null;
-    if (data) return hitratePercent(data);
+    if (data) return hitRatePctFromResult(data);
     return readHitrateCachePct(credentials.username, courseId);
   };
 
@@ -1082,13 +1110,14 @@ function GeneralUtils({
       {currentCourses.length ? (
         <div className="subject-grid">
           {currentCourses.map((item) => {
-            const row = results[item.course.id];
+            const row = liveMetrics[item.course.id];
             const data = row && "error" in row ? null : row;
             const err = row && "error" in row ? row.error : null;
             const hitRatePct = displayHitRatePct(item.course.id);
             const busy = loadingId === item.course.id;
             const atFullHitRate = hitRatePct >= 100;
             const highHitRate = hitRatePct > 80;
+            const showIncompleteButton = !busy && !atFullHitRate;
             return (
               <article
                 className={`utility-course-card hitrate-card ${
@@ -1111,7 +1140,7 @@ function GeneralUtils({
                   {err && <small className="hitrate-error">{err}</small>}
                 </div>
                 <button
-                  className={`hitrate-button ${busy ? "hitrate-button--glowing" : ""}`}
+                  className={`hitrate-button ${busy ? "hitrate-button--glowing" : ""} ${showIncompleteButton ? "hitrate-button--incomplete" : ""}`}
                   type="button"
                   disabled={Boolean(loadingId) || atFullHitRate}
                   onClick={() => void runMaxx(item)}
