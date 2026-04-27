@@ -262,7 +262,26 @@ describe("LMS Buddy", () => {
   });
 
   it("shows lab journal and tools tabs, and persists journal profile details", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(dashboardPayload)));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url === "/api/login") return jsonResponse({ success: true });
+        if (url === "/api/dashboard") return jsonResponse(dashboardPayload);
+        if (url === "/api/hitrate") {
+          return jsonResponse({
+            success: true,
+            course_name: "Machine Learning",
+            manual_activities: 4,
+            marked: 1,
+            skipped: 2,
+            failed: 1,
+            items: { marked: [], skipped: [], failed: [] },
+          });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
 
     render(<App />);
 
@@ -294,13 +313,18 @@ describe("LMS Buddy", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Tools" }));
     expect(screen.getByRole("heading", { name: "Tools", level: 1 })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Hitrate Maxxer Coming soon", level: 2 })).toBeInTheDocument();
-    expect(screen.getByText(/Attempts to open all LMS resources/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Hitrate Maxxer Beta", level: 2 })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Marks activities that use manual completion on the course page \(Moodle checkboxes\) via the LMS completion API/,
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByLabelText("Select subject")).not.toBeInTheDocument();
-    expect(screen.getByText("Hitrate percentage will be populated later.")).toBeInTheDocument();
+    expect(screen.getByText("Run to update completion where supported.")).toBeInTheDocument();
     const hitrateButton = screen.getByRole("button", { name: "Execute maxxing" });
     expect(hitrateButton).toBeEnabled();
     await userEvent.click(hitrateButton);
+    expect(await screen.findByText(/1 marked/)).toBeInTheDocument();
     expect(hitrateButton.closest(".hitrate-card")).toHaveClass("hitrate-card--active");
   });
 });

@@ -84,6 +84,16 @@ type CurrentSubjectCourse = {
   attendance: AttendanceSubject;
 };
 
+type HitrateCourseResult = {
+  success: boolean;
+  course_name?: string;
+  manual_activities?: number;
+  marked?: number;
+  skipped?: number;
+  failed?: number;
+  message?: string;
+};
+
 type AppView = "courses" | "journal" | "general";
 
 type AppRoute = {
@@ -792,7 +802,7 @@ export function App() {
             setSubjectId={setJournalSubject}
           />
         ) : (
-          <GeneralUtils currentCourses={currentSubjectCourses} />
+          <GeneralUtils currentCourses={currentSubjectCourses} credentials={credentials} />
         )}
         <AppFooter />
       </section>
@@ -974,43 +984,97 @@ function JournalUtils({
   );
 }
 
-function GeneralUtils({ currentCourses }: { currentCourses: CurrentSubjectCourse[] }) {
+function GeneralUtils({
+  currentCourses,
+  credentials,
+}: {
+  currentCourses: CurrentSubjectCourse[];
+  credentials: Credentials;
+}) {
   const [animatingCourseId, setAnimatingCourseId] = useState<string | null>(null);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [results, setResults] = useState<Record<string, HitrateCourseResult | { error: string }>>({});
 
-  const playAnimation = (courseId: string) => {
+  const hitratePercent = (row: HitrateCourseResult) => {
+    const total = row.manual_activities ?? 0;
+    if (!total) return 0;
+    const done = (row.marked ?? 0) + (row.skipped ?? 0);
+    return Math.min(100, Math.round((100 * done) / total));
+  };
+
+  const runMaxx = async (item: CurrentSubjectCourse) => {
+    if (loadingId) return;
     setAnimatingCourseId(null);
-    window.setTimeout(() => setAnimatingCourseId(courseId), 0);
-    window.setTimeout(() => setAnimatingCourseId(null), 1100);
+    window.setTimeout(() => setAnimatingCourseId(item.course.id), 0);
+    setLoadingId(item.course.id);
+    try {
+      const data = await postJson<HitrateCourseResult>("/api/hitrate", {
+        ...credentials,
+        course_id: item.course.id,
+        course_name: item.course.name,
+      });
+      setResults((r) => ({ ...r, [item.course.id]: data }));
+    } catch (err) {
+      setResults((r) => ({
+        ...r,
+        [item.course.id]: { error: err instanceof Error ? err.message : "Request failed." },
+      }));
+    } finally {
+      setLoadingId(null);
+      window.setTimeout(() => setAnimatingCourseId(null), 1100);
+    }
   };
 
   return (
     <section className={`panel hitrate-panel ${animatingCourseId ? "hitrate-panel--active" : ""}`}>
       <div className="section-title">
         <h2>
-          Hitrate Maxxer <span className="soon-tag">Coming soon</span>
+          Hitrate Maxxer <span className="soon-tag">Beta</span>
         </h2>
         <span>Current courses only</span>
       </div>
       <p className="muted">
-        Attempts to open all LMS resources to maximize LMS activity for submission slips. It may not reach 100% depending on the type of resources uploaded by faculty.
+        Marks activities that use manual completion on the course page (Moodle checkboxes) via the LMS completion API. Quizzes, forums, and items without
+        manual completion are skipped. It may not reach 100% depending on what faculty enabled.
       </p>
       {currentCourses.length ? (
         <div className="subject-grid">
-          {currentCourses.map((item) => (
-            <article
-              className={`utility-course-card hitrate-card ${animatingCourseId === item.course.id ? "hitrate-card--active" : ""}`}
-              key={item.course.id}
-            >
-              <CircularDial value={0} />
-              <div>
-                <strong>{item.attendance.subject}</strong>
-                <small>Hitrate percentage will be populated later.</small>
-              </div>
-              <button className="hitrate-button" type="button" onClick={() => playAnimation(item.course.id)}>
-                Execute maxxing
-              </button>
-            </article>
-          ))}
+          {currentCourses.map((item) => {
+            const row = results[item.course.id];
+            const data = row && "error" in row ? null : row;
+            const err = row && "error" in row ? row.error : null;
+            const pct = data?.success ? hitratePercent(data) : 0;
+            const busy = loadingId === item.course.id;
+            return (
+              <article
+                className={`utility-course-card hitrate-card ${
+                  animatingCourseId === item.course.id ? "hitrate-card--active" : ""
+                }`}
+                key={item.course.id}
+              >
+                <CircularDial value={pct} />
+                <div>
+                  <strong>{item.attendance.subject}</strong>
+                  {data?.success && (
+                    <small>
+                      {data.marked ?? 0} marked · {data.skipped ?? 0} already done
+                      {!!data.failed && ` · ${data.failed} failed`}
+                    </small>
+                  )}
+                  {err && <small className="hitrate-error">{err}</small>}
+                  {!row && <small>Run to update completion where supported.</small>}
+                </div>
+                <button
+                  className="hitrate-button"
+                  type="button"
+                  disabled={Boolean(loadingId)}
+                  onClick={() => void runMaxx(item)}
+                >
+                  {busy ? "Running…" : "Execute maxxing"}
+                </button>
+              </article>
+            );
+          })}
         </div>
       ) : (
         <p className="muted">No current courses found.</p>
