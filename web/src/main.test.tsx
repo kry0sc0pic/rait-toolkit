@@ -196,7 +196,8 @@ describe("LMS Buddy", () => {
       batch: "AIML B",
     });
     expect(screen.getByRole("button", { name: /Generate CO\/PO cover sheet/ })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Cover page generator" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Cover page generator Coming soon" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Writeup generator Coming soon" })).toBeInTheDocument();
     expect(screen.getByText("BETA Feature")).toBeInTheDocument();
     expect(screen.getByText("Use AI to generate journal-ready writeups and code from experiment aims.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Create journal writeups/ })).toBeInTheDocument();

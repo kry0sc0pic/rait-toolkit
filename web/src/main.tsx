@@ -577,7 +577,9 @@ function JournalUtils({
       </section>
       <section className="panel utility-panel">
         <div className="section-title">
-          <h2>Cover page generator</h2>
+          <h2>
+            Cover page generator <span className="soon-tag">Coming soon</span>
+          </h2>
           <span>Uses your Word document template for PDF generation</span>
         </div>
         <p className="muted">Generate cover sheets from a DOCX template, then export them as PDFs.</p>
@@ -592,8 +594,9 @@ function JournalUtils({
       </section>
       <section className="panel utility-panel">
         <div className="section-title">
-          <h2>Writeup generator</h2>
-          <span>Coming soon</span>
+          <h2>
+            Writeup generator <span className="soon-tag">Coming soon</span>
+          </h2>
         </div>
         <p className="muted">Use AI to generate journal-ready writeups and code from experiment aims.</p>
         <label className="field-label">
