@@ -312,6 +312,31 @@ input:focus {
   font-weight: 400;
 }
 
+.dial--empty {
+  background: conic-gradient(#e8ddd8 0deg, #f2ded7 0);
+}
+
+.dial-empty-label {
+  color: var(--muted);
+  font-family: "Instrument Serif", Georgia, serif;
+  font-size: 1.8rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.hitrate-pct-line {
+  margin: 0.35rem 0 0.2rem;
+  font-size: 0.82rem;
+  color: var(--ink);
+}
+
+.hitrate-pct-line strong {
+  font-family: "Instrument Serif", Georgia, serif;
+  font-size: 1.05rem;
+  font-weight: 400;
+  color: var(--accent);
+}
+
 .stat-card,
 .panel {
   border-radius: 28px;
@@ -582,10 +607,15 @@ input:focus {
   transition: transform 160ms ease, box-shadow 160ms ease;
 }
 
-.hitrate-button:hover {
+.hitrate-button:hover:not(:disabled) {
   transform: translateY(-1px);
   background: #cdbdb7;
   box-shadow: 0 12px 36px rgba(85, 44, 35, 0.12);
+}
+
+.hitrate-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .hitrate-error {

@@ -885,11 +885,21 @@ function CoursesPage({
   );
 }
 
-function CircularDial({ value }: { value: number }) {
+function CircularDial({ value, empty = false }: { value: number; empty?: boolean }) {
+  if (empty) {
+    return (
+      <div className="dial dial--empty" style={{ "--pct": "0%" } as React.CSSProperties}>
+        <div>
+          <span className="dial-empty-label">—</span>
+        </div>
+      </div>
+    );
+  }
+  const v = Math.min(100, Math.max(0, value));
   return (
-    <div className="dial" style={{ "--pct": `${Math.min(100, Math.max(0, value))}%` } as React.CSSProperties}>
+    <div className="dial" style={{ "--pct": `${v}%` } as React.CSSProperties}>
       <div>
-        <strong>{value}%</strong>
+        <strong>{Math.round(v)}%</strong>
       </div>
     </div>
   );
@@ -1043,8 +1053,9 @@ function GeneralUtils({
             const row = results[item.course.id];
             const data = row && "error" in row ? null : row;
             const err = row && "error" in row ? row.error : null;
-            const pct = data?.success ? hitratePercent(data) : 0;
+            const hitRatePct = data?.success ? hitratePercent(data) : null;
             const busy = loadingId === item.course.id;
+            const atFullHitRate = hitRatePct !== null && hitRatePct >= 100;
             return (
               <article
                 className={`utility-course-card hitrate-card ${
@@ -1052,9 +1063,14 @@ function GeneralUtils({
                 }`}
                 key={item.course.id}
               >
-                <CircularDial value={pct} />
+                <CircularDial empty={hitRatePct === null} value={hitRatePct ?? 0} />
                 <div>
                   <strong>{item.attendance.subject}</strong>
+                  {hitRatePct !== null && (
+                    <p className="hitrate-pct-line">
+                      Hit rate <strong>{`${hitRatePct}%`}</strong>
+                    </p>
+                  )}
                   {data?.success && (
                     <small>
                       {data.marked ?? 0} marked · {data.skipped ?? 0} already done
@@ -1067,10 +1083,10 @@ function GeneralUtils({
                 <button
                   className="hitrate-button"
                   type="button"
-                  disabled={Boolean(loadingId)}
+                  disabled={Boolean(loadingId) || atFullHitRate}
                   onClick={() => void runMaxx(item)}
                 >
-                  {busy ? "Running…" : "Execute maxxing"}
+                  {busy ? "Running…" : atFullHitRate ? "100% hit rate" : "Execute maxxing"}
                 </button>
               </article>
             );

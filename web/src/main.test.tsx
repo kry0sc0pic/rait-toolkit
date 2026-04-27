@@ -325,6 +325,41 @@ describe("LMS Buddy", () => {
     expect(hitrateButton).toBeEnabled();
     await userEvent.click(hitrateButton);
     expect(await screen.findByText(/1 marked/)).toBeInTheDocument();
+    expect(hitrateButton.closest("article")).toHaveTextContent("Hit rate 75%");
     expect(hitrateButton.closest(".hitrate-card")).toHaveClass("hitrate-card--active");
+  });
+
+  it("disables maxxing at 100% hit rate and shows the percentage", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url === "/api/login") return jsonResponse({ success: true });
+        if (url === "/api/dashboard") return jsonResponse(dashboardPayload);
+        if (url === "/api/hitrate") {
+          return jsonResponse({
+            success: true,
+            course_name: "Machine Learning",
+            manual_activities: 3,
+            marked: 1,
+            skipped: 2,
+            failed: 0,
+            items: { marked: [], skipped: [], failed: [] },
+          });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+
+    render(<App />);
+
+    await userEvent.type(screen.getByPlaceholderText("Username / Email"), credentials.username);
+    await userEvent.type(screen.getByPlaceholderText("Password"), credentials.password);
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Tools" }));
+    await userEvent.click(screen.getByRole("button", { name: "Execute maxxing" }));
+    const fullBtn = await screen.findByRole("button", { name: "100% hit rate" });
+    expect(fullBtn.closest("article")).toHaveTextContent("Hit rate 100%");
+    expect(fullBtn).toBeDisabled();
   });
 });
