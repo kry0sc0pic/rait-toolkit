@@ -1048,6 +1048,10 @@ function GeneralUtils({
 
   useEffect(() => {
     if (!courseListKey || !credentials.username) return;
+    const anyBelow100 = currentCourses.some(
+      (item) => readHitrateCachePct(credentials.username, item.course.id) < 100,
+    );
+    if (!anyBelow100) return;
     let cancelled = false;
     setSnapshotLoading(true);
     void (async () => {

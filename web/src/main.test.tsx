@@ -383,4 +383,25 @@ describe("LMS Buddy", () => {
     });
     expect(fullBtn).toBeDisabled();
   });
+
+  it("skips /api/hitrate_status when every cached hit rate is already 100%", async () => {
+    localStorage.setItem("lms-buddy-credentials", JSON.stringify(credentials));
+    localStorage.setItem(
+      "lms-buddy-cache-v1-hitrate:student%40example.edu:101",
+      JSON.stringify({ pct: 100, updatedAt: Date.now() }),
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "/api/dashboard") return jsonResponse(dashboardPayload);
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Tools" }));
+    const fullBtn = await screen.findByRole("button", { name: "MAXXED" });
+    expect(fullBtn).toBeDisabled();
+    expect(fullBtn.closest("article")).toHaveTextContent("100%");
+    expect(fetchMock.mock.calls.find(([url]) => url === "/api/hitrate_status")).toBeUndefined();
+  });
 });
