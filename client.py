@@ -571,68 +571,135 @@ class MydyClient:
 
         return {"course_name": course_name, "materials": materials}
 
+    DIRECT_EXTS = (".pdf", ".ppt", ".pptx", ".docx", ".doc", ".xlsx", ".csv")
+    PRESENTATION_EXTS = (".ppt", ".pptx")
+
+    def _candidate_material_urls(self, activity_url: str) -> tuple[list[dict], dict]:
+        """Return ordered (url, source) candidates from an activity page + diagnostics."""
+        if "pluginfile.php" in activity_url or urlparse(activity_url).path.lower().endswith(self.DIRECT_EXTS):
+            return [{"url": activity_url, "source": "direct"}], {"page_status": None, "page_length": 0}
+
+        self._rate_limit("activity")
+        try:
+            resp = self.session.get(activity_url)
+        except requests.RequestException as e:
+            return [], {"network_error": str(e)}
+
+        diag = {"page_status": resp.status_code, "page_length": len(resp.text)}
+        if resp.status_code != 200:
+            return [], diag
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        candidates: list[dict] = []
+        seen: set[str] = set()
+
+        def _add(url: str, source: str) -> None:
+            absolute = self._absolute_url(url)
+            if absolute in seen:
+                return
+            seen.add(absolute)
+            candidates.append({"url": absolute, "source": source})
+
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if "pluginfile.php" in href or urlparse(href).path.lower().endswith(self.DIRECT_EXTS):
+                _add(href, "direct")
+
+        for pdf_url in re.findall(r"PDFFile\s*:\s*'([^']+)'", resp.text):
+            _add(pdf_url, "flexpaper")
+
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if urlparse(href).path.lower().endswith(self.PRESENTATION_EXTS):
+                _add(href, "presentation")
+
+        for iframe in soup.find_all("iframe"):
+            src = iframe.get("src")
+            if src:
+                _add(src, "iframe")
+
+        for obj in soup.find_all("object"):
+            data = obj.get("data")
+            if data:
+                _add(data, "object")
+
+        for embed in soup.find_all("embed"):
+            src = embed.get("src")
+            if src:
+                _add(src, "embed")
+
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if "/pluginfile.php/" in href or urlparse(href).path.lower().endswith(self.DIRECT_EXTS + self.PRESENTATION_EXTS):
+                _add(href, "anchor-fallback")
+
+        diag["candidates"] = len(candidates)
+        return candidates, diag
+
     def resolve_material_url(self, activity_url: str) -> dict | str:
-        """Resolve an LMS activity page to the underlying downloadable file URL."""
+        """Resolve an LMS activity page to a downloadable file URL (first candidate)."""
         if not self.logged_in:
             return "Not logged in."
         if not self._is_mydy_url(activity_url):
             return "Unsupported download URL."
 
-        direct_exts = (".pdf", ".ppt", ".pptx", ".docx", ".doc", ".xlsx", ".csv")
-        if "pluginfile.php" in activity_url or urlparse(activity_url).path.lower().endswith(direct_exts):
-            return {"url": activity_url, "source": "direct"}
-
-        self._rate_limit("activity")
-        try:
-            resp = self.session.get(activity_url)
-            if resp.status_code != 200:
-                return f"Activity returned status {resp.status_code}"
-        except requests.RequestException as e:
-            return f"Network error: {e}"
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            if "pluginfile.php" in href or urlparse(href).path.lower().endswith(direct_exts):
-                return {"url": self._absolute_url(href), "source": "direct"}
-
-        for pdf_url in re.findall(r"PDFFile\s*:\s*'([^']+)'", resp.text):
-            return {"url": self._absolute_url(pdf_url), "source": "flexpaper"}
-
-        iframe = soup.find("iframe", id="presentationobject")
-        if iframe and iframe.has_attr("src"):
-            return {"url": self._absolute_url(iframe["src"]), "source": "iframe"}
-
-        obj = soup.find("object", id="presentationobject")
-        if obj and obj.has_attr("data"):
-            return {"url": self._absolute_url(obj["data"]), "source": "object"}
-
+        candidates, diag = self._candidate_material_urls(activity_url)
+        if candidates:
+            return candidates[0]
+        if "network_error" in diag:
+            return f"Network error: {diag['network_error']}"
+        if diag.get("page_status") and diag["page_status"] != 200:
+            return f"Activity returned status {diag['page_status']}"
         return "No downloadable file found for this activity."
 
     def open_material_stream(self, activity_url: str) -> dict | str:
-        """Open a streaming HTTP response for a downloadable LMS material."""
-        resolved = self.resolve_material_url(activity_url)
-        if isinstance(resolved, str):
-            return resolved
+        """Open a streaming HTTP response for a downloadable LMS material.
 
-        file_url = resolved["url"]
-        if not self._is_mydy_url(file_url):
+        Tries each candidate URL from the activity page in priority order until
+        one returns 200, mirroring the upstream multi-method approach.
+        """
+        if not self.logged_in:
+            return "Not logged in."
+        if not self._is_mydy_url(activity_url):
             return "Unsupported download URL."
 
-        try:
-            self._rate_limit("download")
-            resp = self.session.get(file_url, stream=True)
-            if resp.status_code != 200:
-                return f"Download returned status {resp.status_code}"
-        except requests.RequestException as e:
-            return f"Network error: {e}"
+        candidates, diag = self._candidate_material_urls(activity_url)
+        if not candidates:
+            if "network_error" in diag:
+                return f"Network error: {diag['network_error']}"
+            if diag.get("page_status") and diag["page_status"] != 200:
+                return f"Activity returned status {diag['page_status']}"
+            return (
+                f"No downloadable file found for this activity "
+                f"(activity_status={diag.get('page_status')}, page_length={diag.get('page_length')})."
+            )
 
-        return {
-            "response": resp,
-            "filename": self._filename_from_response(resp, file_url),
-            "source": resolved.get("source", "direct"),
-        }
+        attempts: list[str] = []
+        for candidate in candidates:
+            file_url = candidate["url"]
+            if not self._is_mydy_url(file_url):
+                attempts.append(f"{candidate['source']}: not_mydy")
+                continue
+            try:
+                self._rate_limit("download")
+                resp = self.session.get(file_url, stream=True)
+            except requests.RequestException as e:
+                attempts.append(f"{candidate['source']}: network_error={e}")
+                continue
+            if resp.status_code != 200:
+                attempts.append(f"{candidate['source']}: status={resp.status_code}")
+                resp.close()
+                continue
+            return {
+                "response": resp,
+                "filename": self._filename_from_response(resp, file_url),
+                "source": candidate["source"],
+            }
+
+        return (
+            "Download failed after trying "
+            f"{len(candidates)} candidate URL(s): {'; '.join(attempts)}"
+        )
 
     def download_course_materials(self, course: dict, base_dir: str = ".",
                                   progress_callback=None) -> dict:
