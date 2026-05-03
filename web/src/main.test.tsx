@@ -404,4 +404,36 @@ describe("LMS Buddy", () => {
     expect(fullBtn.closest("article")).toHaveTextContent("100%");
     expect(fetchMock.mock.calls.find(([url]) => url === "/api/hitrate_status")).toBeUndefined();
   });
+
+  it("renders MCP settings with copyable snippets for each client", async () => {
+    localStorage.setItem("lms-buddy-credentials", JSON.stringify(credentials));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url === "/api/dashboard") return jsonResponse(dashboardPayload);
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "MCP" }));
+    expect(window.location.pathname).toBe("/mcp");
+    expect(screen.getByRole("heading", { name: "MCP server", level: 2 })).toBeInTheDocument();
+
+    const expectedToken = btoa(`${credentials.username}:${credentials.password}`);
+    expect(screen.getByText(`${expectedToken.slice(0, 6)}…${expectedToken.slice(-4)}`)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Reveal" }));
+    expect(screen.getByText(expectedToken)).toBeInTheDocument();
+
+    const cursorSnippet = screen.getByText(/"lms-buddy"/);
+    expect(cursorSnippet).toHaveTextContent(`Basic ${expectedToken}`);
+
+    await userEvent.click(screen.getByRole("button", { name: "Codex CLI" }));
+    expect(screen.getByText(/\[mcp_servers\.lms-buddy\]/)).toBeInTheDocument();
+    expect(screen.getByText(/Authorization = "Basic /)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Claude Code" }));
+    expect(screen.getByText(/claude mcp add --transport http/)).toBeInTheDocument();
+  });
 });

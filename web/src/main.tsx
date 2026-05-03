@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Download, FileText, GraduationCap, LogOut } from "lucide-react";
+import { Check, Copy, Download, FileText, GraduationCap, LogOut } from "lucide-react";
 import "./styles.css";
 
 type Credentials = {
@@ -101,7 +101,7 @@ function hitRatePctFromResult(row: HitrateCourseResult): number {
   return Math.min(100, Math.round((100 * done) / total));
 }
 
-type AppView = "courses" | "journal" | "general";
+type AppView = "courses" | "journal" | "general" | "mcp";
 
 type AppRoute = {
   view: AppView;
@@ -391,6 +391,7 @@ function parseRoute(pathname = window.location.pathname): AppRoute {
   if (pathname === "/login") return { view: "courses", isLogin: true };
   if (pathname === "/lab-journal") return { view: "journal" };
   if (pathname === "/tools") return { view: "general" };
+  if (pathname === "/mcp" || pathname === "/settings") return { view: "mcp" };
   const courseMatch = pathname.match(/^\/courses\/([^/]+)$/);
   if (courseMatch) return { view: "courses", courseId: decodeURIComponent(courseMatch[1]) };
   return { view: "courses" };
@@ -399,6 +400,7 @@ function parseRoute(pathname = window.location.pathname): AppRoute {
 function viewPath(view: AppView): string {
   if (view === "journal") return "/lab-journal";
   if (view === "general") return "/tools";
+  if (view === "mcp") return "/mcp";
   return "/courses";
 }
 
@@ -782,6 +784,9 @@ export function App() {
           <button className={view === "general" ? "active" : ""} onClick={() => switchView("general")}>
             Tools
           </button>
+          <button className={view === "mcp" ? "active" : ""} onClick={() => switchView("mcp")}>
+            MCP
+          </button>
         </div>
         <button className="ghost-button" onClick={logout}>
           <LogOut size={16} /> Logout
@@ -792,7 +797,17 @@ export function App() {
         <header className="topbar">
           <div>
             <p className="eyebrow">{typeof dashboard.attendance !== "string" && dashboard.attendance.semester}</p>
-            <h1>{selectedCourse ? selectedCourse.name : view === "courses" ? "Courses" : view === "journal" ? "Lab / Journal" : "Tools"}</h1>
+            <h1>
+              {selectedCourse
+                ? selectedCourse.name
+                : view === "courses"
+                  ? "Courses"
+                  : view === "journal"
+                    ? "Lab / Journal"
+                    : view === "general"
+                      ? "Tools"
+                      : "MCP"}
+            </h1>
           </div>
           <div className="status-row" role="status" aria-live="polite">
             <span className="status-pill">{showSyncing ? "Syncing" : "Ready"}</span>
@@ -835,8 +850,10 @@ export function App() {
             setProfile={setJournalProfile}
             setSubjectId={setJournalSubject}
           />
-        ) : (
+        ) : view === "general" ? (
           <GeneralUtils currentCourses={currentSubjectCourses} credentials={credentials} />
+        ) : (
+          <McpSettings credentials={credentials} />
         )}
         <AppFooter />
       </section>
@@ -1208,6 +1225,265 @@ function GeneralUtils({
         <p className="muted">No current courses found.</p>
       )}
     </section>
+  );
+}
+
+function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } catch {
+        // ignore
+      }
+      document.body.removeChild(ta);
+    }
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1400);
+  };
+  return (
+    <button className="copy-button" type="button" onClick={() => void onCopy()}>
+      {copied ? <Check size={14} /> : <Copy size={14} />}
+      {copied ? "Copied" : label}
+    </button>
+  );
+}
+
+type McpClient = {
+  id: "cursor" | "claude-desktop" | "claude-code" | "codex";
+  label: string;
+  pathHint: string;
+  language: "json" | "toml" | "shell";
+  snippet: (token: string, url: string) => string;
+};
+
+const MCP_URL = `${window.location.protocol}//${window.location.host}/api/mcp`;
+
+const MCP_CLIENTS: McpClient[] = [
+  {
+    id: "cursor",
+    label: "Cursor",
+    pathHint: "~/.cursor/mcp.json or Cursor Settings → MCP",
+    language: "json",
+    snippet: (token, url) =>
+      JSON.stringify(
+        {
+          mcpServers: {
+            "lms-buddy": {
+              url,
+              headers: { Authorization: `Basic ${token}` },
+            },
+          },
+        },
+        null,
+        2,
+      ),
+  },
+  {
+    id: "claude-desktop",
+    label: "Claude Desktop",
+    pathHint:
+      "macOS: ~/Library/Application Support/Claude/claude_desktop_config.json · Win: %APPDATA%\\Claude\\claude_desktop_config.json",
+    language: "json",
+    snippet: (token, url) =>
+      JSON.stringify(
+        {
+          mcpServers: {
+            "lms-buddy": {
+              command: "npx",
+              args: ["-y", "mcp-remote", url, "--header", `Authorization:Basic ${token}`],
+            },
+          },
+        },
+        null,
+        2,
+      ),
+  },
+  {
+    id: "claude-code",
+    label: "Claude Code",
+    pathHint: "Run once; saves to ~/.claude.json",
+    language: "shell",
+    snippet: (token, url) =>
+      [
+        `claude mcp add --transport http lms-buddy ${url} \\`,
+        `  --header "Authorization: Basic ${token}"`,
+      ].join("\n"),
+  },
+  {
+    id: "codex",
+    label: "Codex CLI",
+    pathHint: "~/.codex/config.toml",
+    language: "toml",
+    snippet: (token, url) =>
+      [
+        `[mcp_servers.lms-buddy]`,
+        `url = "${url}"`,
+        ``,
+        `[mcp_servers.lms-buddy.headers]`,
+        `Authorization = "Basic ${token}"`,
+      ].join("\n"),
+  },
+];
+
+const MCP_TOOLS = [
+  { name: "list_subjects", desc: "Current courses with attendance %." },
+  { name: "list_files", desc: "Downloadable files in a course (course_id)." },
+  { name: "download_file", desc: "Base64 file contents (≤ 3 MB)." },
+  { name: "get_hitrates", desc: "Course Progress hit rate per current course." },
+  { name: "max_hitrate", desc: "Visit every pending activity for a course." },
+];
+
+function utf8ToBase64(input: string): string {
+  const bytes = new TextEncoder().encode(input);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 1) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+function McpSettings({ credentials }: { credentials: Credentials }) {
+  const [activeClient, setActiveClient] = useState<McpClient["id"]>("cursor");
+  const [revealToken, setRevealToken] = useState(false);
+
+  const token = useMemo(() => {
+    if (!credentials.username || !credentials.password) return "";
+    return utf8ToBase64(`${credentials.username}:${credentials.password}`);
+  }, [credentials]);
+
+  const tokenDisplay = revealToken ? token : token ? `${token.slice(0, 6)}…${token.slice(-4)}` : "";
+  const client = MCP_CLIENTS.find((c) => c.id === activeClient) || MCP_CLIENTS[0];
+  const snippet = token ? client.snippet(token, MCP_URL) : client.snippet("<paste-token-here>", MCP_URL);
+
+  return (
+    <>
+      <section className="panel utility-panel">
+        <div className="section-title">
+          <h2>MCP server</h2>
+          <span>Connect desktop AI tools to your LMS</span>
+        </div>
+        <p className="muted">
+          LMS Buddy exposes a remote{" "}
+          <a href="https://modelcontextprotocol.io" target="_blank" rel="noreferrer">
+            Model Context Protocol
+          </a>{" "}
+          server so tools like Cursor, Claude, and Codex can call your LMS as if they had your login. Each request authenticates with HTTP Basic auth using your
+          MyDy email and password — they never leave your config file.
+        </p>
+        <div className="mcp-fields">
+          <div className="mcp-field">
+            <span>Server URL</span>
+            <div className="mcp-field-row">
+              <code>{MCP_URL}</code>
+              <CopyButton text={MCP_URL} />
+            </div>
+          </div>
+          <div className="mcp-field">
+            <span>Auth token (Base64 of email:password)</span>
+            {token ? (
+              <div className="mcp-field-row">
+                <code>{tokenDisplay}</code>
+                <button className="copy-button" type="button" onClick={() => setRevealToken((v) => !v)}>
+                  {revealToken ? "Hide" : "Reveal"}
+                </button>
+                <CopyButton text={token} label="Copy token" />
+              </div>
+            ) : (
+              <p className="muted small">Sign in first — the token is generated locally from your credentials.</p>
+            )}
+          </div>
+        </div>
+        <p className="mcp-warning">
+          Treat your config file like a password manager — it grants full access to your MyDy account. If credentials change, regenerate.
+        </p>
+      </section>
+
+      <section className="panel utility-panel">
+        <div className="section-title">
+          <h2>Setup snippets</h2>
+          <span>Pick your client</span>
+        </div>
+        <div className="mcp-tabs">
+          {MCP_CLIENTS.map((c) => (
+            <button
+              key={c.id}
+              className={`mcp-tab${activeClient === c.id ? " mcp-tab--active" : ""}`}
+              type="button"
+              onClick={() => setActiveClient(c.id)}
+            >
+              {c.label}
+            </button>
+          ))}
+        </div>
+        <p className="muted small mcp-path">{client.pathHint}</p>
+        <div className="mcp-code-wrap">
+          <CopyButton text={snippet} />
+          <pre className={`mcp-code mcp-code--${client.language}`}>{snippet}</pre>
+        </div>
+        <McpClientSteps clientId={client.id} />
+      </section>
+
+      <section className="panel utility-panel">
+        <div className="section-title">
+          <h2>Available tools</h2>
+          <span>5 tools, JSON-RPC 2.0 over HTTP</span>
+        </div>
+        <ul className="mcp-tool-list">
+          {MCP_TOOLS.map((t) => (
+            <li key={t.name}>
+              <code>{t.name}</code>
+              <span>{t.desc}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </>
+  );
+}
+
+function McpClientSteps({ clientId }: { clientId: McpClient["id"] }) {
+  if (clientId === "cursor") {
+    return (
+      <ol className="mcp-steps">
+        <li>Open Cursor → Settings → MCP, or edit <code>~/.cursor/mcp.json</code>.</li>
+        <li>Paste the snippet above; if you already have other servers, merge inside the existing <code>mcpServers</code> object.</li>
+        <li>Restart Cursor and look for <em>lms-buddy</em> in the MCP list with 5 tools.</li>
+      </ol>
+    );
+  }
+  if (clientId === "claude-desktop") {
+    return (
+      <ol className="mcp-steps">
+        <li>
+          Edit <code>claude_desktop_config.json</code> and merge the snippet under <code>mcpServers</code>. The <code>mcp-remote</code> bridge tunnels HTTP to
+          stdio.
+        </li>
+        <li>Quit Claude Desktop fully (menu → Quit), then reopen.</li>
+        <li>Click the hammer icon in a chat to confirm the lms-buddy tools are listed.</li>
+      </ol>
+    );
+  }
+  if (clientId === "claude-code") {
+    return (
+      <ol className="mcp-steps">
+        <li>Run the command above in your terminal — Claude Code stores the config in <code>~/.claude.json</code>.</li>
+        <li>Inside a session, run <code>/mcp</code> to verify the server connects and lists 5 tools.</li>
+      </ol>
+    );
+  }
+  return (
+    <ol className="mcp-steps">
+      <li>Append the snippet to <code>~/.codex/config.toml</code>; make sure no other section uses the same key.</li>
+      <li>Run <code>codex mcp list</code> to confirm <em>lms-buddy</em> appears, or just start a session.</li>
+    </ol>
   );
 }
 
