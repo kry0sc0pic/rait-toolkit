@@ -1259,10 +1259,10 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
 }
 
 type McpClient = {
-  id: "cursor" | "claude-desktop" | "claude-code" | "codex";
+  id: "cursor" | "claude-desktop" | "claude-code" | "codex" | "chatgpt";
   label: string;
   pathHint: string;
-  language: "json" | "toml" | "shell";
+  language: "json" | "toml" | "shell" | "text";
   snippet: (token: string, url: string) => string;
 };
 
@@ -1331,6 +1331,20 @@ const MCP_CLIENTS: McpClient[] = [
         ``,
         `[mcp_servers.lms-buddy.headers]`,
         `Authorization = "Basic ${token}"`,
+      ].join("\n"),
+  },
+  {
+    id: "chatgpt",
+    label: "ChatGPT Desktop",
+    pathHint: "Settings → Connectors → Add custom connector (Streamable HTTP)",
+    language: "text",
+    snippet: (token, url) =>
+      [
+        `Name:           lms-buddy`,
+        `Server URL:     ${url}`,
+        `Auth method:    Custom HTTP header`,
+        `Header name:    Authorization`,
+        `Header value:   Basic ${token}`,
       ].join("\n"),
   },
 ];
@@ -1479,10 +1493,19 @@ function McpClientSteps({ clientId }: { clientId: McpClient["id"] }) {
       </ol>
     );
   }
+  if (clientId === "codex") {
+    return (
+      <ol className="mcp-steps">
+        <li>Append the snippet to <code>~/.codex/config.toml</code>; make sure no other section uses the same key.</li>
+        <li>Run <code>codex mcp list</code> to confirm <em>lms-buddy</em> appears, or just start a session.</li>
+      </ol>
+    );
+  }
   return (
     <ol className="mcp-steps">
-      <li>Append the snippet to <code>~/.codex/config.toml</code>; make sure no other section uses the same key.</li>
-      <li>Run <code>codex mcp list</code> to confirm <em>lms-buddy</em> appears, or just start a session.</li>
+      <li>Open ChatGPT Desktop → <em>Settings</em> → <em>Connectors</em> (or <em>Apps &amp; Connectors</em>) and click <em>Add custom connector</em>.</li>
+      <li>Pick <em>Streamable HTTP</em> as the transport, then paste the values from the snippet into the matching fields.</li>
+      <li>Save, enable the <em>lms-buddy</em> connector for the conversation, and ask ChatGPT to call one of the tools (e.g. &ldquo;list my subjects&rdquo;).</li>
     </ol>
   );
 }
