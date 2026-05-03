@@ -15,8 +15,12 @@ Tools:
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import re
 import sys
+import threading
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -29,22 +33,108 @@ from client import MydyClient  # noqa: E402
 
 
 PROTOCOL_VERSION = "2025-06-18"
-SERVER_INFO = {"name": "lms-buddy", "version": "0.1.0"}
+SERVER_INFO = {"name": "lms-buddy", "version": "0.2.0"}
 COURSE_VIEW = "https://mydy.dypatil.edu/rait/course/view.php"
 CURRENT_SEM_COUNT = 8
 MAX_DOWNLOAD_BYTES = 3 * 1024 * 1024  # ~3 MB raw -> ~4 MB base64; under Vercel 4.5 MB cap.
+
+CACHE_TTL = {
+    "list_subjects": 300,        # 5 min
+    "list_files": 300,           # 5 min
+    "get_hitrates": 60,          # 1 min
+    "download_resolve": 86400,   # 24 h: activity_url -> file URL/source mapping
+}
+
+
+# -- in-process TTL cache (per warm Lambda instance) ----------------------
+
+
+_CACHE_LOCK = threading.RLock()
+_CACHE_STORE: dict[tuple, tuple[float, object]] = {}
+
+
+def _cache_get(key: tuple):
+    with _CACHE_LOCK:
+        entry = _CACHE_STORE.get(key)
+        if entry is None:
+            return None
+        expires_at, value = entry
+        if time.time() > expires_at:
+            _CACHE_STORE.pop(key, None)
+            return None
+        return value
+
+
+def _cache_set(key: tuple, value, ttl: int) -> None:
+    with _CACHE_LOCK:
+        _CACHE_STORE[key] = (time.time() + ttl, value)
+
+
+def _cache_invalidate_prefix(prefix: tuple) -> None:
+    with _CACHE_LOCK:
+        for key in list(_CACHE_STORE.keys()):
+            if key[: len(prefix)] == prefix:
+                _CACHE_STORE.pop(key, None)
+
+
+def _user_key(creds: tuple[str, str]) -> str:
+    """Stable per-user cache namespace; password included so cache invalidates on rotation."""
+    digest = hashlib.sha256(f"{creds[0].lower().strip()}\x00{creds[1]}".encode()).hexdigest()
+    return digest[:16]
+
+
+# -- attendance name matching (mirrors the web frontend's heuristic) ------
+
+
+def _normalize_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (value or "").lower())
+
+
+def _acronym(value: str) -> str:
+    parts = [p for p in re.split(r"[^a-zA-Z0-9]+", value or "") if p]
+    return "".join(p[0].lower() for p in parts)
+
+
+def _attendance_for_course(course_name: str, att_subjects: list) -> dict | None:
+    if not course_name or not att_subjects:
+        return None
+    norm_course = _normalize_name(course_name)
+    course_acr = _acronym(course_name)
+    for entry in att_subjects:
+        if not isinstance(entry, dict):
+            continue
+        subject = entry.get("subject") or ""
+        norm_sub = _normalize_name(subject)
+        if not norm_sub:
+            continue
+        if (
+            norm_sub == norm_course
+            or norm_sub in norm_course
+            or norm_course in norm_sub
+            or _acronym(subject) == course_acr
+        ):
+            return entry
+    return None
 
 
 TOOLS = [
     {
         "name": "list_subjects",
         "description": (
-            "List your current LMS courses (subjects) with attendance percentage. "
+            "List LMS courses (subjects) with attendance percentage. "
+            "Returns only the current semester (8 courses) by default. "
+            "Pass include_all=true to also return older / archived courses. "
             "Use the returned `id` for other tools that need a course."
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {},
+            "properties": {
+                "include_all": {
+                    "type": "boolean",
+                    "description": "Include older / archived courses in addition to the current semester.",
+                    "default": False,
+                },
+            },
             "additionalProperties": False,
         },
     },
@@ -143,13 +233,28 @@ def _course_obj(course_id: str, name: str | None = None) -> dict:
     return {"id": course_id, "name": (name or "").strip(), "url": f"{COURSE_VIEW}?id={course_id}"}
 
 
-def _attendance_for(subjects: list, index: int) -> dict | None:
-    if 0 <= index < len(subjects) and isinstance(subjects[index], dict):
-        return subjects[index]
-    return None
+def _build_subject_items(courses: list[dict], att_subjects: list) -> list[dict]:
+    items: list[dict] = []
+    for course in courses:
+        name = course.get("name") or ""
+        att = _attendance_for_course(name, att_subjects)
+        items.append({
+            "id": str(course.get("id") or ""),
+            "name": name,
+            "url": course.get("url") or "",
+            "attendance_percentage": (att or {}).get("percentage"),
+            "attendance_subject": (att or {}).get("subject"),
+        })
+    return items
 
 
-def _tool_list_subjects(client: MydyClient) -> dict:
+def _tool_list_subjects(client: MydyClient, args: dict, user: str) -> dict:
+    include_all = bool(args.get("include_all"))
+    cache_key = (user, "list_subjects", include_all)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     courses = client.list_courses()
     if isinstance(courses, str):
         return _text_result(courses, is_error=True)
@@ -158,54 +263,103 @@ def _tool_list_subjects(client: MydyClient) -> dict:
     att_subjects = attendance.get("subjects", []) if isinstance(attendance, dict) else []
 
     current = courses[:CURRENT_SEM_COUNT]
-    items: list[dict] = []
-    for i, course in enumerate(current):
-        att = _attendance_for(att_subjects, i)
-        items.append({
-            "id": str(course.get("id") or ""),
-            "name": course.get("name") or "",
-            "url": course.get("url") or "",
-            "attendance_percentage": (att or {}).get("percentage"),
-            "attendance_subject": (att or {}).get("subject"),
-        })
+    older = courses[CURRENT_SEM_COUNT:]
 
-    if not items:
-        return _text_result("No current courses found.", structured={"subjects": []})
+    current_items = _build_subject_items(current, att_subjects)
+    older_items = _build_subject_items(older, att_subjects) if include_all else []
 
-    lines = []
-    for s in items:
-        att = f" — {s['attendance_percentage']}% attendance" if s["attendance_percentage"] is not None else ""
-        lines.append(f"- [{s['id']}] {s['name']}{att}")
-    return _text_result("Current courses:\n" + "\n".join(lines), structured={"subjects": items})
+    structured = {
+        "include_all": include_all,
+        "current_count": len(current_items),
+        "subjects": current_items + older_items,
+    }
+    if include_all:
+        structured["older_count"] = len(older_items)
+
+    if not current_items and not older_items:
+        result = _text_result("No courses found.", structured=structured)
+        _cache_set(cache_key, result, CACHE_TTL["list_subjects"])
+        return result
+
+    def _render(label: str, items: list[dict]) -> list[str]:
+        out = [label]
+        for s in items:
+            att = f" — {s['attendance_percentage']}% attendance" if s["attendance_percentage"] is not None else ""
+            out.append(f"- [{s['id']}] {s['name']}{att}")
+        return out
+
+    lines: list[str] = []
+    if current_items:
+        lines.extend(_render("Current courses:", current_items))
+    if include_all and older_items:
+        if lines:
+            lines.append("")
+        lines.extend(_render(f"Older courses ({len(older_items)}):", older_items))
+
+    result = _text_result("\n".join(lines), structured=structured)
+    _cache_set(cache_key, result, CACHE_TTL["list_subjects"])
+    return result
 
 
-def _tool_list_files(client: MydyClient, args: dict) -> dict:
+def _tool_list_files(client: MydyClient, args: dict, user: str) -> dict:
     course_id = str(args.get("course_id") or "").strip()
     if not course_id:
         return _text_result("course_id is required.", is_error=True)
+
+    cache_key = (user, "list_files", course_id)
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     materials = client.list_downloadable_materials(course_id)
     if isinstance(materials, str):
         return _text_result(materials, is_error=True)
 
     items = materials.get("materials", []) if isinstance(materials, dict) else []
     if not items:
-        return _text_result(
+        result = _text_result(
             f"No downloadable files in {materials.get('course_name', course_id)}.",
             structured=materials,
         )
+        _cache_set(cache_key, result, CACHE_TTL["list_files"])
+        return result
 
     lines = [f"Files for {materials.get('course_name', course_id)}:"]
     for m in items:
         lines.append(f"- {m['name']} ({m['type']}) → {m['activity_url']}")
-    return _text_result("\n".join(lines), structured=materials)
+    result = _text_result("\n".join(lines), structured=materials)
+    _cache_set(cache_key, result, CACHE_TTL["list_files"])
+    return result
 
 
-def _tool_download_file(client: MydyClient, args: dict) -> dict:
+def _tool_download_file(client: MydyClient, args: dict, user: str) -> dict:
     activity_url = str(args.get("activity_url") or "").strip()
     if not activity_url:
         return _text_result("activity_url is required.", is_error=True)
 
-    stream = client.open_material_stream(activity_url)
+    # File contents are always streamed fresh, but the resolve step (parse the
+    # activity page to find a downloadable URL) is cached per user+activity.
+    resolve_key = (user, "download_resolve", activity_url)
+    cached_resolution = _cache_get(resolve_key)
+    if cached_resolution is not None and isinstance(cached_resolution, dict):
+        try:
+            client._rate_limit("download")  # type: ignore[attr-defined]
+            response = client.session.get(cached_resolution["file_url"], stream=True)
+            if response.status_code == 200:
+                stream = {
+                    "response": response,
+                    "filename": cached_resolution.get("filename")
+                    or client._filename_from_response(response, cached_resolution["file_url"]),  # type: ignore[attr-defined]
+                    "source": cached_resolution.get("source", "direct"),
+                }
+            else:
+                response.close()
+                stream = client.open_material_stream(activity_url)
+        except Exception:
+            stream = client.open_material_stream(activity_url)
+    else:
+        stream = client.open_material_stream(activity_url)
+
     if isinstance(stream, str):
         return _text_result(stream, is_error=True)
 
@@ -233,6 +387,17 @@ def _tool_download_file(client: MydyClient, args: dict) -> dict:
         except Exception:
             pass
 
+    file_url = stream["response"].url
+    _cache_set(
+        resolve_key,
+        {
+            "file_url": file_url,
+            "filename": filename,
+            "source": stream.get("source"),
+        },
+        CACHE_TTL["download_resolve"],
+    )
+
     blob = base64.b64encode(bytes(buffer)).decode("ascii")
     summary = f"Downloaded {filename} ({len(buffer)} bytes, {mime})."
     return {
@@ -258,13 +423,18 @@ def _tool_download_file(client: MydyClient, args: dict) -> dict:
     }
 
 
-def _tool_get_hitrates(client: MydyClient) -> dict:
+def _tool_get_hitrates(client: MydyClient, args: dict, user: str) -> dict:
+    cache_key = (user, "get_hitrates")
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
+
     courses = client.list_courses()
     if isinstance(courses, str):
         return _text_result(courses, is_error=True)
     current = courses[:CURRENT_SEM_COUNT]
     if not current:
-        return _text_result("No current courses found.", structured={"courses": {}})
+        return _text_result("No current courses found.", structured={"courses": []})
 
     batch = client.hit_rate_snapshot_courses([
         _course_obj(str(c["id"]), c.get("name")) for c in current
@@ -296,10 +466,12 @@ def _tool_get_hitrates(client: MydyClient) -> dict:
             lines.append(f"- [{s['id']}] {s['name']}: {s['percent']}% ({s['viewed']}/{s['total']})")
         else:
             lines.append(f"- [{s['id']}] {s['name']}: no progress widget")
-    return _text_result("\n".join(lines), structured={"courses": items})
+    result = _text_result("\n".join(lines), structured={"courses": items})
+    _cache_set(cache_key, result, CACHE_TTL["get_hitrates"])
+    return result
 
 
-def _tool_max_hitrate(client: MydyClient, args: dict) -> dict:
+def _tool_max_hitrate(client: MydyClient, args: dict, user: str) -> dict:
     course_id = str(args.get("course_id") or "").strip()
     if not course_id:
         return _text_result("course_id is required.", is_error=True)
@@ -308,6 +480,10 @@ def _tool_max_hitrate(client: MydyClient, args: dict) -> dict:
     result = client.hit_rate_maxx_course(course)
     if isinstance(result, dict) and result.get("error"):
         return _text_result(result["error"], is_error=True)
+
+    # Mutating call: bust hit-rate snapshot cache for this user (next get_hitrates
+    # will hit MyDy fresh).
+    _cache_invalidate_prefix((user, "get_hitrates"))
 
     summary = (
         f"{result.get('course_name') or course['name'] or course_id}: "
@@ -320,10 +496,10 @@ def _tool_max_hitrate(client: MydyClient, args: dict) -> dict:
 
 
 TOOL_DISPATCH = {
-    "list_subjects": lambda c, a: _tool_list_subjects(c),
+    "list_subjects": _tool_list_subjects,
     "list_files": _tool_list_files,
     "download_file": _tool_download_file,
-    "get_hitrates": lambda c, a: _tool_get_hitrates(c),
+    "get_hitrates": _tool_get_hitrates,
     "max_hitrate": _tool_max_hitrate,
 }
 
@@ -333,12 +509,19 @@ def _call_tool(name: str, args: dict, creds: tuple[str, str] | None) -> dict:
     if fn is None:
         return _text_result(f"Unknown tool: {name}", is_error=True)
 
+    if not creds:
+        return _text_result(
+            "Missing 'Authorization: Basic <base64(email:password)>' header.",
+            is_error=True,
+        )
+    user_key = _user_key(creds)
+
     client, err = _login(creds)
     if err:
         return _text_result(err, is_error=True)
 
     try:
-        return fn(client, args or {})
+        return fn(client, args or {}, user_key)
     except Exception as exc:
         return _text_result(f"Tool '{name}' failed: {exc}\n{traceback.format_exc()}", is_error=True)
 
