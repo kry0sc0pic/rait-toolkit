@@ -12,6 +12,7 @@ from api.download import handler as DownloadHandler
 from api.hitrate import handler as HitrateHandler
 from api.hitrate_status import handler as HitrateStatusHandler
 from api.login import handler as LoginHandler
+from api.mcp import handler as McpHandler
 
 
 ROOT = Path(__file__).resolve().parent
@@ -24,6 +25,7 @@ API_HANDLERS = {
     "/api/download": DownloadHandler,
     "/api/hitrate": HitrateHandler,
     "/api/hitrate_status": HitrateStatusHandler,
+    "/api/mcp": McpHandler,
 }
 
 
@@ -39,6 +41,11 @@ class LocalHandler(SimpleHTTPRequestHandler):
         return super().do_OPTIONS()
 
     def do_POST(self):
+        if self.path in API_HANDLERS:
+            return self._dispatch_api()
+        self.send_error(404, "Not found")
+
+    def do_DELETE(self):
         if self.path in API_HANDLERS:
             return self._dispatch_api()
         self.send_error(404, "Not found")
