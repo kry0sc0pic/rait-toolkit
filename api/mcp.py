@@ -33,7 +33,7 @@ from client import MydyClient  # noqa: E402
 
 
 PROTOCOL_VERSION = "2025-06-18"
-SERVER_INFO = {"name": "lms-buddy", "version": "0.4.0"}
+SERVER_INFO = {"name": "lms-buddy", "version": "0.4.1"}
 COURSE_VIEW = "https://mydy.dypatil.edu/rait/course/view.php"
 CURRENT_SEM_FALLBACK = 8  # only used when attendance has no subjects (rare)
 MAX_DOWNLOAD_BYTES = 3 * 1024 * 1024  # ~3 MB raw -> ~4 MB base64; under Vercel 4.5 MB cap.
@@ -468,36 +468,45 @@ def _tool_download_file(client: MydyClient, args: dict, user: str) -> dict:
 
     blob = base64.b64encode(bytes(buffer)).decode("ascii")
     target_path = _join_save_path(save_to, filename) if save_to else None
-    summary_lines = [f"Downloaded {filename} ({len(buffer)} bytes, {mime})."]
+
+    summary_lines = [
+        f"Downloaded {filename} ({len(buffer)} bytes, {mime}).",
+    ]
     if target_path:
         summary_lines.append(
-            f"Save the attached resource to {target_path}. The MCP server "
-            "runs remotely; decode the base64 blob locally and write the bytes there."
+            f"Save target: {target_path}. The MCP server runs remotely and "
+            "cannot write to your filesystem; decode the base64 below and "
+            "write the bytes to that path using your local file-write tool."
         )
-    summary = " ".join(summary_lines)
+    else:
+        summary_lines.append(
+            "Decode the base64 below to recover the file. The MCP server "
+            "runs remotely so it cannot write to your filesystem directly."
+        )
+    summary_lines.append(f"filename={filename}")
+    summary_lines.append(f"mime={mime}")
+    summary = "\n".join(summary_lines)
 
     structured: dict = {
         "filename": filename,
         "mime_type": mime,
         "size_bytes": len(buffer),
         "source": stream.get("source"),
+        "content_base64": blob,
     }
     if save_to:
         structured["save_to"] = save_to
         structured["target_path"] = target_path
 
+    # NOTE: We do NOT return an MCP `resource` content block here. The spec
+    # supports `resource.blob` for binary attachments, but Claude Desktop's
+    # bridge converts it to an `image` block and rejects non-image MIME types
+    # ("ClaudeAiToolResultRequest.content.1.image.source.media_type"). Embedding
+    # the base64 in plain text + structuredContent works on every client.
     return {
         "content": [
             {"type": "text", "text": summary},
-            {
-                "type": "resource",
-                "resource": {
-                    "uri": f"lms-buddy://download/{filename}",
-                    "name": filename,
-                    "mimeType": mime,
-                    "blob": blob,
-                },
-            },
+            {"type": "text", "text": f"```base64\n{blob}\n```"},
         ],
         "structuredContent": structured,
         "isError": False,
