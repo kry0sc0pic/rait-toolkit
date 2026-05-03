@@ -33,7 +33,7 @@ from client import MydyClient  # noqa: E402
 
 
 PROTOCOL_VERSION = "2025-06-18"
-SERVER_INFO = {"name": "lms-buddy", "version": "0.3.0"}
+SERVER_INFO = {"name": "lms-buddy", "version": "0.4.0"}
 COURSE_VIEW = "https://mydy.dypatil.edu/rait/course/view.php"
 CURRENT_SEM_FALLBACK = 8  # only used when attendance has no subjects (rare)
 MAX_DOWNLOAD_BYTES = 3 * 1024 * 1024  # ~3 MB raw -> ~4 MB base64; under Vercel 4.5 MB cap.
@@ -200,12 +200,23 @@ TOOLS = [
         "name": "download_file",
         "description": (
             "Download a file from an LMS activity URL (use list_files to discover URLs). "
-            f"Returns the file as a base64 blob; cap is {MAX_DOWNLOAD_BYTES} bytes."
+            f"Returns the file as a base64 blob; cap is {MAX_DOWNLOAD_BYTES} bytes. "
+            "Pass `save_to` with a folder path to receive an explicit save target — "
+            "the MCP server runs remotely so it can't write to your disk; the calling "
+            "AI/client is expected to decode the blob and save it there."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "activity_url": {"type": "string", "description": "Activity URL on mydy.dypatil.edu."},
+                "save_to": {
+                    "type": "string",
+                    "description": (
+                        "Optional folder path on the calling machine. When provided, the response "
+                        "tells the client to save the decoded bytes at <save_to>/<filename>. "
+                        "Tilde (~) and relative paths are returned verbatim — interpret them in your client."
+                    ),
+                },
             },
             "required": ["activity_url"],
             "additionalProperties": False,
@@ -377,10 +388,22 @@ def _tool_list_files(client: MydyClient, args: dict, user: str) -> dict:
     return result
 
 
+def _join_save_path(folder: str, filename: str) -> str:
+    """Best-effort path join that preserves the literal folder string (incl. ~)."""
+    cleaned = folder.rstrip().rstrip("/").rstrip("\\")
+    if not cleaned:
+        return filename
+    sep = "\\" if "\\" in folder and "/" not in folder else "/"
+    return f"{cleaned}{sep}{filename}"
+
+
 def _tool_download_file(client: MydyClient, args: dict, user: str) -> dict:
     activity_url = str(args.get("activity_url") or "").strip()
     if not activity_url:
         return _text_result("activity_url is required.", is_error=True)
+
+    save_to_raw = args.get("save_to")
+    save_to = str(save_to_raw).strip() if isinstance(save_to_raw, str) and save_to_raw.strip() else None
 
     # File contents are always streamed fresh, but the resolve step (parse the
     # activity page to find a downloadable URL) is cached per user+activity.
@@ -444,7 +467,25 @@ def _tool_download_file(client: MydyClient, args: dict, user: str) -> dict:
     )
 
     blob = base64.b64encode(bytes(buffer)).decode("ascii")
-    summary = f"Downloaded {filename} ({len(buffer)} bytes, {mime})."
+    target_path = _join_save_path(save_to, filename) if save_to else None
+    summary_lines = [f"Downloaded {filename} ({len(buffer)} bytes, {mime})."]
+    if target_path:
+        summary_lines.append(
+            f"Save the attached resource to {target_path}. The MCP server "
+            "runs remotely; decode the base64 blob locally and write the bytes there."
+        )
+    summary = " ".join(summary_lines)
+
+    structured: dict = {
+        "filename": filename,
+        "mime_type": mime,
+        "size_bytes": len(buffer),
+        "source": stream.get("source"),
+    }
+    if save_to:
+        structured["save_to"] = save_to
+        structured["target_path"] = target_path
+
     return {
         "content": [
             {"type": "text", "text": summary},
@@ -458,12 +499,7 @@ def _tool_download_file(client: MydyClient, args: dict, user: str) -> dict:
                 },
             },
         ],
-        "structuredContent": {
-            "filename": filename,
-            "mime_type": mime,
-            "size_bytes": len(buffer),
-            "source": stream.get("source"),
-        },
+        "structuredContent": structured,
         "isError": False,
     }
 
