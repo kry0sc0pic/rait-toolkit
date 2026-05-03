@@ -33,9 +33,9 @@ from client import MydyClient  # noqa: E402
 
 
 PROTOCOL_VERSION = "2025-06-18"
-SERVER_INFO = {"name": "lms-buddy", "version": "0.2.0"}
+SERVER_INFO = {"name": "lms-buddy", "version": "0.3.0"}
 COURSE_VIEW = "https://mydy.dypatil.edu/rait/course/view.php"
-CURRENT_SEM_COUNT = 8
+CURRENT_SEM_FALLBACK = 8  # only used when attendance has no subjects (rare)
 MAX_DOWNLOAD_BYTES = 3 * 1024 * 1024  # ~3 MB raw -> ~4 MB base64; under Vercel 4.5 MB cap.
 
 CACHE_TTL = {
@@ -115,6 +115,52 @@ def _attendance_for_course(course_name: str, att_subjects: list) -> dict | None:
         ):
             return entry
     return None
+
+
+def _split_current_older(courses: list[dict], att_subjects: list) -> tuple[list[dict], list[dict]]:
+    """Use attendance subjects to determine the active semester's courses.
+
+    Mirrors the web UI: iterate attendance subjects, match each to a course by
+    normalized name / acronym; the matched courses are "current". Anything else
+    is "older". Falls back to the first N courses only when attendance has no
+    subjects (e.g. brand-new account).
+    """
+    if not att_subjects:
+        return courses[:CURRENT_SEM_FALLBACK], courses[CURRENT_SEM_FALLBACK:]
+
+    current: list[dict] = []
+    seen_ids: set[str] = set()
+    for entry in att_subjects:
+        if not isinstance(entry, dict):
+            continue
+        subject = entry.get("subject") or ""
+        norm_sub = _normalize_name(subject)
+        if not norm_sub:
+            continue
+        sub_acr = _acronym(subject)
+        for course in courses:
+            cid = str(course.get("id") or "")
+            if cid in seen_ids:
+                continue
+            cname = course.get("name") or ""
+            norm_course = _normalize_name(cname)
+            if not norm_course:
+                continue
+            if (
+                norm_sub == norm_course
+                or norm_sub in norm_course
+                or norm_course in norm_sub
+                or _acronym(cname) == sub_acr
+            ):
+                current.append(course)
+                seen_ids.add(cid)
+                break
+
+    if not current:
+        return courses[:CURRENT_SEM_FALLBACK], courses[CURRENT_SEM_FALLBACK:]
+
+    older = [c for c in courses if str(c.get("id") or "") not in seen_ids]
+    return current, older
 
 
 TOOLS = [
@@ -262,8 +308,7 @@ def _tool_list_subjects(client: MydyClient, args: dict, user: str) -> dict:
     attendance = client.get_attendance()
     att_subjects = attendance.get("subjects", []) if isinstance(attendance, dict) else []
 
-    current = courses[:CURRENT_SEM_COUNT]
-    older = courses[CURRENT_SEM_COUNT:]
+    current, older = _split_current_older(courses, att_subjects)
 
     current_items = _build_subject_items(current, att_subjects)
     older_items = _build_subject_items(older, att_subjects) if include_all else []
@@ -432,7 +477,10 @@ def _tool_get_hitrates(client: MydyClient, args: dict, user: str) -> dict:
     courses = client.list_courses()
     if isinstance(courses, str):
         return _text_result(courses, is_error=True)
-    current = courses[:CURRENT_SEM_COUNT]
+
+    attendance = client.get_attendance()
+    att_subjects = attendance.get("subjects", []) if isinstance(attendance, dict) else []
+    current, _older = _split_current_older(courses, att_subjects)
     if not current:
         return _text_result("No current courses found.", structured={"courses": []})
 
