@@ -35,31 +35,40 @@ class LocalHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(DIST_DIR), **kwargs)
 
+    def _api_handler_for_path(self):
+        path = self.path.split("?", 1)[0]
+        return API_HANDLERS.get(path)
+
     def do_OPTIONS(self):
-        if self.path in API_HANDLERS:
+        if self._api_handler_for_path():
             return self._dispatch_api()
         return super().do_OPTIONS()
 
     def do_POST(self):
-        if self.path in API_HANDLERS:
+        if self._api_handler_for_path():
             return self._dispatch_api()
         self.send_error(404, "Not found")
 
     def do_DELETE(self):
-        if self.path in API_HANDLERS:
+        if self._api_handler_for_path():
             return self._dispatch_api()
         self.send_error(404, "Not found")
 
     def do_GET(self):
+        if self._api_handler_for_path():
+            return self._dispatch_api()
         if self.path.startswith("/api/"):
-            self.send_error(405, "Method not allowed")
+            self.send_error(404, "Not found")
             return
         if not (DIST_DIR / self.path.lstrip("/")).exists() and "." not in Path(self.path).name:
             self.path = "/index.html"
         return super().do_GET()
 
     def _dispatch_api(self):
-        handler_cls = API_HANDLERS[self.path]
+        handler_cls = self._api_handler_for_path()
+        if handler_cls is None:
+            self.send_error(404, "Not found")
+            return
         original_class = self.__class__
         self.__class__ = handler_cls
         try:

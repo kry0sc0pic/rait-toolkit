@@ -7,7 +7,7 @@ Vercel serverless (BaseHTTPRequestHandler) and the local dev server.
 Tools:
   - list_subjects               -> current courses with attendance %
   - list_files(course_id)       -> downloadable materials in a course
-  - download_file(activity_url) -> base64 file blob (max ~3 MB)
+  - download_file(activity_url) -> short-lived signed URL the client fetches
   - get_hitrates                -> Course Progress % for every current course
   - max_hitrate(course_id, ...) -> visit pending activities to max hit rate
 """
@@ -33,10 +33,9 @@ from client import MydyClient  # noqa: E402
 
 
 PROTOCOL_VERSION = "2025-06-18"
-SERVER_INFO = {"name": "lms-buddy", "version": "0.4.1"}
+SERVER_INFO = {"name": "lms-buddy", "version": "0.5.0"}
 COURSE_VIEW = "https://mydy.dypatil.edu/rait/course/view.php"
 CURRENT_SEM_FALLBACK = 8  # only used when attendance has no subjects (rare)
-MAX_DOWNLOAD_BYTES = 3 * 1024 * 1024  # ~3 MB raw -> ~4 MB base64; under Vercel 4.5 MB cap.
 
 CACHE_TTL = {
     "list_subjects": 300,        # 5 min
@@ -199,11 +198,10 @@ TOOLS = [
     {
         "name": "download_file",
         "description": (
-            "Download a file from an LMS activity URL (use list_files to discover URLs). "
-            f"Returns the file as a base64 blob; cap is {MAX_DOWNLOAD_BYTES} bytes. "
-            "Pass `save_to` with a folder path to receive an explicit save target — "
-            "the MCP server runs remotely so it can't write to your disk; the calling "
-            "AI/client is expected to decode the blob and save it there."
+            "Returns a short-lived signed URL the client can fetch with curl/native web tools "
+            "to download the file directly from LMS Buddy. The URL embeds your auth so the "
+            "client doesn't need any extra header, and it expires after 10 minutes. "
+            "Pass `save_to` with a folder path to receive an explicit save target alongside the URL."
         ),
         "inputSchema": {
             "type": "object",
@@ -213,7 +211,7 @@ TOOLS = [
                     "type": "string",
                     "description": (
                         "Optional folder path on the calling machine. When provided, the response "
-                        "tells the client to save the decoded bytes at <save_to>/<filename>. "
+                        "includes <save_to> as the directory the client should save the file into. "
                         "Tilde (~) and relative paths are returned verbatim — interpret them in your client."
                     ),
                 },
@@ -397,7 +395,24 @@ def _join_save_path(folder: str, filename: str) -> str:
     return f"{cleaned}{sep}{filename}"
 
 
-def _tool_download_file(client: MydyClient, args: dict, user: str) -> dict:
+def _b64url(value: str) -> str:
+    return base64.urlsafe_b64encode(value.encode("utf-8")).rstrip(b"=").decode("ascii")
+
+
+def _build_download_url(origin: str, email: str, password: str, activity_url: str) -> str:
+    """Self-authenticating URL: u/p/a are each base64-url-encoded.
+
+    The credentials in the URL are the auth — anyone with the URL can fetch
+    the referenced file as long as the password is valid. Treat URLs as
+    sensitive (same trust level as the password itself).
+    """
+    return (
+        f"{origin}/api/download?"
+        f"u={_b64url(email)}&p={_b64url(password)}&a={_b64url(activity_url)}"
+    )
+
+
+def _tool_download_file(client: MydyClient, args: dict, user: str, origin: str, creds: tuple[str, str]) -> dict:
     activity_url = str(args.get("activity_url") or "").strip()
     if not activity_url:
         return _text_result("activity_url is required.", is_error=True)
@@ -405,109 +420,36 @@ def _tool_download_file(client: MydyClient, args: dict, user: str) -> dict:
     save_to_raw = args.get("save_to")
     save_to = str(save_to_raw).strip() if isinstance(save_to_raw, str) and save_to_raw.strip() else None
 
-    # File contents are always streamed fresh, but the resolve step (parse the
-    # activity page to find a downloadable URL) is cached per user+activity.
-    resolve_key = (user, "download_resolve", activity_url)
-    cached_resolution = _cache_get(resolve_key)
-    if cached_resolution is not None and isinstance(cached_resolution, dict):
-        try:
-            client._rate_limit("download")  # type: ignore[attr-defined]
-            response = client.session.get(cached_resolution["file_url"], stream=True)
-            if response.status_code == 200:
-                stream = {
-                    "response": response,
-                    "filename": cached_resolution.get("filename")
-                    or client._filename_from_response(response, cached_resolution["file_url"]),  # type: ignore[attr-defined]
-                    "source": cached_resolution.get("source", "direct"),
-                }
-            else:
-                response.close()
-                stream = client.open_material_stream(activity_url)
-        except Exception:
-            stream = client.open_material_stream(activity_url)
-    else:
-        stream = client.open_material_stream(activity_url)
+    if not origin:
+        return _text_result(
+            "Server origin not detected (missing Host header). Cannot build a download URL.",
+            is_error=True,
+        )
 
-    if isinstance(stream, str):
-        return _text_result(stream, is_error=True)
-
-    response = stream["response"]
-    filename = stream.get("filename") or "material.bin"
-    mime = (response.headers.get("content-type") or "application/octet-stream").split(";", 1)[0].strip()
-
-    buffer = bytearray()
-    try:
-        for chunk in response.iter_content(chunk_size=64 * 1024):
-            if not chunk:
-                continue
-            buffer.extend(chunk)
-            if len(buffer) > MAX_DOWNLOAD_BYTES:
-                return _text_result(
-                    f"File exceeds {MAX_DOWNLOAD_BYTES} bytes (~{MAX_DOWNLOAD_BYTES // (1024 * 1024)} MB) "
-                    "and can't be returned over MCP. Use the web app to download.",
-                    is_error=True,
-                )
-    except Exception as exc:
-        return _text_result(f"Download stream failed: {exc}", is_error=True)
-    finally:
-        try:
-            response.close()
-        except Exception:
-            pass
-
-    file_url = stream["response"].url
-    _cache_set(
-        resolve_key,
-        {
-            "file_url": file_url,
-            "filename": filename,
-            "source": stream.get("source"),
-        },
-        CACHE_TTL["download_resolve"],
-    )
-
-    blob = base64.b64encode(bytes(buffer)).decode("ascii")
-    target_path = _join_save_path(save_to, filename) if save_to else None
+    download_url = _build_download_url(origin, creds[0], creds[1], activity_url)
 
     summary_lines = [
-        f"Downloaded {filename} ({len(buffer)} bytes, {mime}).",
+        "Fetch this URL with your client's HTTP/curl tool to get the file. "
+        "The server will respond with the file bytes and a Content-Disposition "
+        "header naming the file. The URL embeds your MyDy credentials — treat it "
+        "like a password (it stays valid as long as the password does).",
+        f"download_url: {download_url}",
     ]
-    if target_path:
-        summary_lines.append(
-            f"Save target: {target_path}. The MCP server runs remotely and "
-            "cannot write to your filesystem; decode the base64 below and "
-            "write the bytes to that path using your local file-write tool."
-        )
-    else:
-        summary_lines.append(
-            "Decode the base64 below to recover the file. The MCP server "
-            "runs remotely so it cannot write to your filesystem directly."
-        )
-    summary_lines.append(f"filename={filename}")
-    summary_lines.append(f"mime={mime}")
-    summary = "\n".join(summary_lines)
-
     structured: dict = {
-        "filename": filename,
-        "mime_type": mime,
-        "size_bytes": len(buffer),
-        "source": stream.get("source"),
-        "content_base64": blob,
+        "download_url": download_url,
+        "activity_url": activity_url,
     }
     if save_to:
+        summary_lines.append(f"save_to: {save_to}")
+        summary_lines.append(
+            "After fetching, save the response body into that folder using the filename "
+            "from the Content-Disposition header "
+            "(e.g. `curl -L -OJ --output-dir <save_to> '<download_url>'`)."
+        )
         structured["save_to"] = save_to
-        structured["target_path"] = target_path
 
-    # NOTE: We do NOT return an MCP `resource` content block here. The spec
-    # supports `resource.blob` for binary attachments, but Claude Desktop's
-    # bridge converts it to an `image` block and rejects non-image MIME types
-    # ("ClaudeAiToolResultRequest.content.1.image.source.media_type"). Embedding
-    # the base64 in plain text + structuredContent works on every client.
     return {
-        "content": [
-            {"type": "text", "text": summary},
-            {"type": "text", "text": f"```base64\n{blob}\n```"},
-        ],
+        "content": [{"type": "text", "text": "\n".join(summary_lines)}],
         "structuredContent": structured,
         "isError": False,
     }
@@ -597,7 +539,7 @@ TOOL_DISPATCH = {
 }
 
 
-def _call_tool(name: str, args: dict, creds: tuple[str, str] | None) -> dict:
+def _call_tool(name: str, args: dict, creds: tuple[str, str] | None, origin: str) -> dict:
     fn = TOOL_DISPATCH.get(name)
     if fn is None:
         return _text_result(f"Unknown tool: {name}", is_error=True)
@@ -614,6 +556,8 @@ def _call_tool(name: str, args: dict, creds: tuple[str, str] | None) -> dict:
         return _text_result(err, is_error=True)
 
     try:
+        if name == "download_file":
+            return _tool_download_file(client, args or {}, user_key, origin, creds)
         return fn(client, args or {}, user_key)
     except Exception as exc:
         return _text_result(f"Tool '{name}' failed: {exc}\n{traceback.format_exc()}", is_error=True)
@@ -630,7 +574,7 @@ def _jsonrpc_result(request_id, result) -> dict:
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
-def _handle_message(message: dict, creds: tuple[str, str] | None) -> dict | None:
+def _handle_message(message: dict, creds: tuple[str, str] | None, origin: str) -> dict | None:
     if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
         return _jsonrpc_error(None, -32600, "Invalid JSON-RPC 2.0 request.")
     method = message.get("method")
@@ -670,13 +614,23 @@ def _handle_message(message: dict, creds: tuple[str, str] | None) -> dict | None
         arguments = params.get("arguments") or {}
         if not isinstance(arguments, dict):
             return _jsonrpc_error(request_id, -32602, "Tool arguments must be an object.")
-        result = _call_tool(tool_name, arguments, creds)
+        result = _call_tool(tool_name, arguments, creds, origin)
         return _jsonrpc_result(request_id, result)
 
     return _jsonrpc_error(request_id, -32601, f"Method not found: {method}")
 
 
 # -- HTTP handler ---------------------------------------------------------
+
+
+def _request_origin(req: BaseHTTPRequestHandler) -> str:
+    forwarded_host = req.headers.get("x-forwarded-host") or req.headers.get("host") or ""
+    if not forwarded_host:
+        return ""
+    proto = req.headers.get("x-forwarded-proto")
+    if not proto:
+        proto = "http" if forwarded_host.startswith(("127.0.0.1", "localhost")) else "https"
+    return f"{proto}://{forwarded_host}"
 
 
 def _set_cors_headers(req: BaseHTTPRequestHandler) -> None:
@@ -743,6 +697,7 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             creds = _parse_basic(self.headers.get("authorization"))
+            origin = _request_origin(self)
 
             if isinstance(payload, list):
                 responses = []
@@ -750,7 +705,7 @@ class handler(BaseHTTPRequestHandler):
                     if not isinstance(msg, dict):
                         responses.append(_jsonrpc_error(None, -32600, "Invalid request."))
                         continue
-                    out = _handle_message(msg, creds)
+                    out = _handle_message(msg, creds, origin)
                     if out is not None:
                         responses.append(out)
                 if not responses:
@@ -763,7 +718,7 @@ class handler(BaseHTTPRequestHandler):
                 _send_json(self, 400, _jsonrpc_error(None, -32600, "Invalid request."))
                 return
 
-            response = _handle_message(payload, creds)
+            response = _handle_message(payload, creds, origin)
             if response is None:
                 _send_status(self, 202)
                 return
