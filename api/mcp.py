@@ -5,11 +5,21 @@ Stateless — every tool call logs in fresh against MyDy. Designed to run on
 Vercel serverless (BaseHTTPRequestHandler) and the local dev server.
 
 Tools:
-  - list_subjects               -> current courses with attendance %
-  - list_files(course_id)       -> downloadable materials in a course
-  - download_file(activity_url) -> short-lived signed URL the client fetches
-  - get_hitrates                -> Course Progress % for every current course
-  - max_hitrate(course_id, ...) -> visit pending activities to max hit rate
+  - list_subjects(include_all?)  -> attendance-derived current courses (and
+                                    archived if include_all=true)
+  - list_files(course_id)        -> downloadable materials in a course
+  - download_file(activity_url, save_to?)
+                                 -> JSON {download_url, ...} the client fetches
+                                    via curl/native HTTP. The URL embeds u/p/a
+                                    as base64 query params (no expiry — treat
+                                    like the password). Tool result is tiny so
+                                    Claude Desktop's 1 MB cap is never hit.
+  - get_hitrates                 -> Course Progress % for every current course
+  - max_hitrate(course_id, ...)  -> visit pending activities to max hit rate
+
+Server-side TTL cache (per warm Lambda):
+  list_subjects 5m, list_files 5m, get_hitrates 60s, download-resolve 24h.
+  max_hitrate invalidates the user's get_hitrates cache.
 """
 
 from __future__ import annotations
@@ -591,7 +601,9 @@ def _handle_message(message: dict, creds: tuple[str, str] | None, origin: str) -
             "serverInfo": SERVER_INFO,
             "instructions": (
                 "LMS Buddy MCP. Authenticate with HTTP Basic auth using your MyDy email:password. "
-                "Tools: list_subjects, list_files, download_file, get_hitrates, max_hitrate."
+                "Tools: list_subjects (optionally include_all), list_files, download_file "
+                "(returns a self-authenticating URL — fetch it with your HTTP/curl tool, do not "
+                "echo the URL to the user), get_hitrates, max_hitrate."
             ),
         })
 

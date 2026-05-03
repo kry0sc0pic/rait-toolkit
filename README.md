@@ -13,12 +13,15 @@ A clean web app, terminal UI, and MCP server for interacting with the MyDy (Mood
 
 ## Features
 
-- **LMS Buddy Web App** — Light, responsive browser UI for students
-- **Dashboard** — Attendance summary + current semester courses at a glance
-- **Course Detail** — Tabbed view with Content, Assignments, Grades, and Announcements
-- **Download Materials** — Proxy course material downloads through the app API
-- **Login Screen** — Auto-login from `.env` or manual login via the UI
-- **MCP Server** — Let AI assistants interact with your LMS
+- **LMS Buddy Web App** — Light, responsive browser UI for students. Hosted at [`lms-buddy.krishaay.dev`](https://lms-buddy.krishaay.dev).
+- **Courses + attendance** — Current-semester courses surfaced from attendance data, with the rest tucked under an accordion.
+- **Course detail** — Browse and download every material in a course; bulk-download with progress and cancel.
+- **Hit-rate Maxxer** — Reads each course's Course Progress widget from MyDy and visits every pending activity to bring it to 100%.
+- **Lab / Journal utilities** — Stores student profile (name, USN, roll, batch) locally; cover-page and writeup generators (beta).
+- **Local credentials only** — Email + password live in `localStorage` after sign-in; the logout button clears them.
+- **Remote MCP server** — A `Streamable HTTP` MCP at `/api/mcp` lets Cursor, Claude Desktop, Claude Code, Codex CLI, and ChatGPT Desktop call your LMS.
+- **Stdio MCP server** — Legacy local MCP (`mcp_server.py`) for Claude Code-style stdio configs.
+- **Terminal UI** — Textual-based TUI for desktop browsing.
 
 ## Setup
 
@@ -110,17 +113,121 @@ python __main__.py
 
 ---
 
-## MCP Server
+## Remote MCP Server (recommended)
 
-The project also includes an MCP (Model Context Protocol) server for AI assistants like Claude Code.
+The deployed web app exposes a stateless **Streamable HTTP MCP server** at:
 
-### Quick Setup with Claude Code
+```
+https://lms-buddy.krishaay.dev/api/mcp
+```
+
+Authenticate with HTTP Basic auth using your MyDy email and password — every tool call logs in fresh, so the server holds no session state.
+
+The web app's **MCP** tab (`/mcp`) generates the right config snippet for your client with your token already filled in. Or build the token yourself with:
+
+```sh
+printf 'your_email@dypatil.edu:***REMOVED***' | base64
+```
+
+### Available tools
+
+| Tool | Args | Returns |
+|------|------|---------|
+| `list_subjects` | optional `include_all: bool` | Current-semester courses (matched from attendance) with attendance %; `include_all=true` adds older/archived courses |
+| `list_files` | `course_id` | Downloadable materials in a course |
+| `download_file` | `activity_url`, optional `save_to` | A self-authenticating `download_url` the client fetches via curl/native web tools (the URL embeds `u`/`p`/`a` as base64 query params; no expiry — treat it like the password) |
+| `get_hitrates` | – | Course Progress widget percentage for every current course |
+| `max_hitrate` | `course_id`, optional `course_name` | Visits every pending activity for a course; returns `percent_before / percent_after` |
+
+Server-side TTL cache (in-process per warm Lambda): 5 min for `list_subjects` / `list_files`, 60 s for `get_hitrates`, 24 h for the download-resolve step. `max_hitrate` busts the user's hit-rate cache.
+
+### Cursor — `~/.cursor/mcp.json`
+
+```json
+{
+  "mcpServers": {
+    "lms-buddy": {
+      "url": "https://lms-buddy.krishaay.dev/api/mcp",
+      "headers": { "Authorization": "***REMOVED***" }
+    }
+  }
+}
+```
+
+### Claude Desktop — `claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "lms-buddy": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://lms-buddy.krishaay.dev/api/mcp",
+               "--header", "Authorization:***REMOVED***"]
+    }
+  }
+}
+```
+
+### Claude Code
+
+```sh
+claude mcp add --transport http lms-buddy https://lms-buddy.krishaay.dev/api/mcp \
+  --header "Authorization: ***REMOVED***"
+```
+
+### Codex CLI — `~/.codex/config.toml`
+
+```toml
+[mcp_servers.lms-buddy]
+url = "https://lms-buddy.krishaay.dev/api/mcp"
+
+[mcp_servers.lms-buddy.headers]
+Authorization = "***REMOVED***"
+```
+
+### ChatGPT Desktop
+
+Settings → Connectors → **Add custom connector** → choose **Streamable HTTP**, then:
+
+```
+Name:           lms-buddy
+Server URL:     https://lms-buddy.krishaay.dev/api/mcp
+Auth method:    Custom HTTP header
+Header name:    Authorization
+Header value:   ***REMOVED***
+```
+
+### How `download_file` works
+
+Tool calls only return a small JSON payload — the actual file bytes never go through the MCP transport (which dodges Claude Desktop's 1 MB tool-output cap and image-MIME quirks). The structured response looks like:
+
+```json
+{
+  "download_url": "https://lms-buddy.krishaay.dev/api/download?u=…&p=…&a=…",
+  "activity_url": "…",
+  "save_to": "~/Downloads"
+}
+```
+
+The AI agent then fetches that URL with its native HTTP/curl tool and writes the body using its file-write tool. With shell-capable agents, one line:
+
+```sh
+curl -L -OJ --output-dir "$save_to" "$download_url"
+```
+
+The URL embeds your credentials, so anyone with the URL can fetch the same file as long as the password is valid. Don't paste it in shared logs.
+
+---
+
+## Legacy stdio MCP Server
+
+`mcp_server.py` is the original local stdio server (good for Claude Code if you prefer running things on-machine):
 
 ```sh
 claude mcp add mydy-lms -e MYDY_USERNAME=your_email@dypatil.edu -e MYDY_PASSWORD=***REMOVED*** -- python /path/to/mcp_server.py
 ```
 
-### Manual Config
+Manual config:
 
 ```json
 {
@@ -137,18 +244,13 @@ claude mcp add mydy-lms -e MYDY_USERNAME=your_email@dypatil.edu -e MYDY_PASSWORD
 }
 ```
 
-### Available MCP Tools
+Tools: `login`, `list_courses`, `get_course_content`, `get_assignments`, `get_grades`, `get_announcements`, `get_attendance`, `download_course_materials`, `hit_rate_maxxer`.
 
-| Tool | Description |
-|------|-------------|
-| `login` | Authenticate with the LMS portal |
-| `list_courses` | List all enrolled courses |
-| `get_course_content` | List sections and activities in a course |
-| `get_assignments` | View assignments with due dates and submission status |
-| `get_grades` | Fetch grade report for a course |
-| `get_announcements` | Read course announcements |
-| `get_attendance` | View attendance summary for current semester |
-| `download_course_materials` | Download materials from specific or all courses |
+Install the optional dependency set first:
+
+```sh
+uv pip install -r requirements-tui-mcp.txt
+```
 
 ---
 
@@ -156,16 +258,25 @@ claude mcp add mydy-lms -e MYDY_USERNAME=your_email@dypatil.edu -e MYDY_PASSWORD
 
 ```
 mydy-lms-scraper/
-├── api/              # Vercel Python API functions for LMS Buddy
-├── web/              # React frontend for LMS Buddy
-├── __main__.py       # Entry point
-├── app.py            # Textual TUI application
-├── client.py         # HTTP client (shared by TUI and MCP server)
-├── mcp_server.py     # MCP server for AI assistants
-├── requirements.txt  # Dependencies
-├── package.json      # Web app dependencies and scripts
-├── vercel.json       # Vercel build and routing config
-└── .env              # Credentials (gitignored)
+├── api/                 # Vercel Python API functions for LMS Buddy
+│   ├── _shared.py        #   Per-request client factory + portal-down login retry
+│   ├── login.py          #   Test creds
+│   ├── dashboard.py      #   Courses + attendance
+│   ├── course.py         #   Sections, assignments, grades, announcements, materials
+│   ├── download.py       #   Streams a file (POST JSON or GET ?u=&p=&a=)
+│   ├── hitrate.py        #   max_hitrate via Course Progress widget
+│   ├── hitrate_status.py #   Batched read-only Course Progress snapshot
+│   └── mcp.py            #   Streamable HTTP MCP server (5 tools)
+├── web/                 # React frontend (incl. /mcp settings page)
+├── __main__.py          # TUI entry point
+├── app.py               # Textual TUI
+├── client.py            # HTTP client (shared by TUI, web API, MCP servers)
+├── mcp_server.py        # Legacy stdio MCP server
+├── local_server.py      # Run the full stack locally without `vercel dev`
+├── requirements.txt     # Vercel-only deps (web/API)
+├── requirements-tui-mcp.txt  # TUI + stdio MCP extras
+├── package.json         # Web app deps and scripts
+└── vercel.json          # Vercel build and routing config
 ```
 
 ## Requirements

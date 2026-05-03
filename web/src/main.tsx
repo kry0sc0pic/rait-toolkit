@@ -1350,9 +1350,9 @@ const MCP_CLIENTS: McpClient[] = [
 ];
 
 const MCP_TOOLS = [
-  { name: "list_subjects", desc: "Current courses with attendance %." },
+  { name: "list_subjects", desc: "Current courses with attendance %; pass include_all=true for archived." },
   { name: "list_files", desc: "Downloadable files in a course (course_id)." },
-  { name: "download_file", desc: "Base64 file contents (≤ 3 MB)." },
+  { name: "download_file", desc: "Returns a self-authenticating download URL the client fetches with curl." },
   { name: "get_hitrates", desc: "Course Progress hit rate per current course." },
   { name: "max_hitrate", desc: "Visit every pending activity for a course." },
 ];
