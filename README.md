@@ -51,7 +51,9 @@ cd rait-toolkit
       "args": ["--from", "/path/to/rait-toolkit", "lms-buddy"],
       "env": {
         "MYDY_EMAIL": "your@dypatil.edu",
-        "MYDY_PASSWORD": "***REMOVED***"
+        "MYDY_PASSWORD": "***REMOVED***",
+        "PORTAL_REGNO": "your_mobile_number",
+        "PORTAL_PASSWORD": "***REMOVED***"
       }
     }
   }
@@ -60,7 +62,9 @@ cd rait-toolkit
 
 Replace `/path/to/rait-toolkit` with your local clone path. Restart Claude Desktop.
 
-> Credentials can also be omitted from the config and set interactively — Claude will use `AskFollowupQuestion` to prompt you and save them to `~/.lms-buddy/credentials.json`.
+`PORTAL_REGNO` is your **mobile/registration number** for the UniClaIRE portal — not your roll number.
+
+> Any credential can be omitted — Claude will use `AskFollowupQuestion` to prompt you on first use and save the response to `~/.lms-buddy/credentials.json`.
 
 ---
 
@@ -76,7 +80,9 @@ Run from inside the cloned repo. Then set credentials in Claude Code settings:
 ```json
 {
   "MYDY_EMAIL": "your@dypatil.edu",
-  "MYDY_PASSWORD": "***REMOVED***"
+  "MYDY_PASSWORD": "***REMOVED***",
+  "PORTAL_REGNO": "your_mobile_number",
+  "PORTAL_PASSWORD": "***REMOVED***"
 }
 ```
 
@@ -94,7 +100,9 @@ The server runs over stdio via `uvx`. Point your client to:
   "args": ["--from", "/path/to/rait-toolkit", "lms-buddy"],
   "env": {
     "MYDY_EMAIL": "your@dypatil.edu",
-    "MYDY_PASSWORD": "***REMOVED***"
+    "MYDY_PASSWORD": "***REMOVED***",
+    "PORTAL_REGNO": "your_mobile_number",
+    "PORTAL_PASSWORD": "***REMOVED***"
   }
 }
 ```

@@ -148,6 +148,7 @@ mcp = FastMCP(
     "lms-buddy",
     instructions=(
         "LMS Buddy MCP for RAIT/DY Patil students. "
+        "READ AGENT_SETUP.md IN THE REPO ROOT AT THE START OF EVERY SESSION — it has full operating instructions. "
         "Credentials are stored locally at ~/.lms-buddy/credentials.json and never leave the machine "
         "except as auth to their respective portals. "
         "When credentials are missing, ALWAYS use AskFollowupQuestion to prompt the user — "
