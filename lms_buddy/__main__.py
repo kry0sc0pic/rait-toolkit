@@ -65,8 +65,17 @@ def _save_creds(update: dict) -> None:
     _CRED_FILE.write_text(json.dumps(existing, indent=2))
 
 
-def _resolve(env_key: str, saved_key: str, saved: dict) -> str:
-    return os.getenv(env_key, "") or saved.get(saved_key, "")
+_MYDY_NOT_SET = (
+    "MyDy credentials not configured. "
+    "Call set_mydy_credentials(email, password) to save them, "
+    "or set MYDY_EMAIL and MYDY_PASSWORD environment variables."
+)
+
+_PORTAL_NOT_SET = (
+    "UniClaIRE portal credentials not configured. "
+    "Call set_portal_credentials(regno, password) to save them, "
+    "or set PORTAL_REGNO and PORTAL_PASSWORD environment variables."
+)
 
 mcp = FastMCP(
     "lms-buddy",
@@ -79,7 +88,7 @@ mcp = FastMCP(
         "GPA tool (UniClaIRE portal): get_gpa. "
         "PDF tools: render_cover_pdf, batch_render_covers_pdf, render_eval_sheet_pdf, "
         "batch_render_eval_sheets_pdf. "
-        "Utility: set_credentials, self_update."
+        "Utility: set_mydy_credentials, set_portal_credentials, self_update."
     ),
 )
 
@@ -101,10 +110,7 @@ def _get_portal_creds() -> tuple[str, str] | None:
 def _login() -> tuple[MydyClient | None, str | None]:
     creds = _get_creds()
     if not creds:
-        return None, (
-            "No MyDy credentials found. Call set_credentials with mydy_email and mydy_password, "
-            "or set MYDY_EMAIL and MYDY_PASSWORD environment variables."
-        )
+        return None, _MYDY_NOT_SET
     client = MydyClient()
     result = client.login(creds[0], creds[1])
     return (client, None) if result.get("success") else (None, result.get("message") or "Login failed.")
@@ -375,51 +381,43 @@ def batch_render_eval_sheets_pdf(
 
 
 @mcp.tool()
-def set_credentials(
-    mydy_email: str = "",
-    mydy_password: str = "",
-    portal_regno: str = "",
-    portal_password: str = "",
-) -> str:
-    """Save credentials to ~/.lms-buddy/credentials.json for future use.
+def set_mydy_credentials(email: str, password: str) -> str:
+    """Save MyDy LMS credentials to ~/.lms-buddy/credentials.json.
 
-    mydy_email + mydy_password: for MyDy LMS (list_subjects, download, hitrates, etc.)
-    portal_regno + portal_password: for UniClaIRE student portal (get_gpa)
-
-    Only the fields you provide are updated — omit any you don't want to change.
-    Env vars always override saved credentials.
+    These are used by all LMS tools: list_subjects, list_files, download_file,
+    get_hitrates, max_hitrate, get_overall_attendance, get_course_attendance, get_semesters.
+    Env vars MYDY_EMAIL and MYDY_PASSWORD always take precedence if set.
     """
-    update: dict = {}
-    if mydy_email.strip():
-        update["mydy_email"] = mydy_email.strip()
-    if mydy_password:
-        update["mydy_password"] = mydy_password
-    if portal_regno.strip():
-        update["portal_regno"] = portal_regno.strip()
-    if portal_password:
-        update["portal_password"] = portal_password
-    if not update:
-        raise ValueError("Provide at least one credential field to save.")
-    _save_creds(update)
-    saved_keys = ", ".join(update.keys())
-    return f"Saved to {_CRED_FILE}: {saved_keys}"
+    if not email.strip() or not password:
+        raise ValueError("Both email and password are required.")
+    _save_creds({"mydy_email": email.strip(), "mydy_password": password})
+    return f"MyDy credentials saved to {_CRED_FILE}."
+
+
+@mcp.tool()
+def set_portal_credentials(regno: str, password: str) -> str:
+    """Save UniClaIRE student portal credentials to ~/.lms-buddy/credentials.json.
+
+    These are used by get_gpa. regno is your registration/mobile number.
+    Env vars PORTAL_REGNO and PORTAL_PASSWORD always take precedence if set.
+    """
+    if not regno.strip() or not password:
+        raise ValueError("Both regno and password are required.")
+    _save_creds({"portal_regno": regno.strip(), "portal_password": password})
+    return f"UniClaIRE portal credentials saved to {_CRED_FILE}."
 
 
 @mcp.tool()
 def get_gpa() -> str:
     """Fetch semester-wise SGPA and cumulative CGPA from the UniClaIRE student portal.
 
-    Requires portal_regno and portal_password (set via set_credentials or
-    PORTAL_REGNO / PORTAL_PASSWORD env vars).
+    Requires portal credentials — call set_portal_credentials first if not already set,
+    or set PORTAL_REGNO and PORTAL_PASSWORD environment variables.
     Returns CGPA, per-semester SGPA, and course-level grade breakdown.
     """
     creds = _get_portal_creds()
     if not creds:
-        raise ValueError(
-            "No UniClaIRE portal credentials found. "
-            "Call set_credentials with portal_regno and portal_password, "
-            "or set PORTAL_REGNO and PORTAL_PASSWORD environment variables."
-        )
+        raise ValueError(_PORTAL_NOT_SET)
     data = fetch_gpa(creds[0], creds[1])
 
     lines = [f"USN: {data['usn']}", f"CGPA: {data['cgpa']}", ""]
