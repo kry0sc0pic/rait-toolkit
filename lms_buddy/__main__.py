@@ -156,8 +156,11 @@ mcp = FastMCP(
         "get_overall_attendance, get_course_attendance, get_semesters. "
         "GPA tool (UniClaIRE portal): get_gpa. "
         "PDF tools: render_cover_pdf, batch_render_covers_pdf, render_eval_sheet_pdf, "
-        "batch_render_eval_sheets_pdf. "
-        "Utility: set_mydy_credentials, set_portal_credentials, self_update."
+        "batch_render_eval_sheets_pdf — each automatically opens the PDF after saving. "
+        "Utility: set_mydy_credentials, set_portal_credentials, get_cached_info, open_pdf, self_update. "
+        "IMPORTANT: Call get_cached_info at the start of any session to load the user's known "
+        "identifiers (email, USN, roll number). Note: the UniClaIRE login uses a mobile/regno, "
+        "NOT the student's roll number — these are different identifiers."
     ),
 )
 
@@ -380,6 +383,7 @@ def render_cover_pdf(
                           general=general, out=out)
     if not result.get("success"):
         raise ValueError(result.get("error", "Render failed"))
+    open_pdf(result["path"])
     return result["path"]
 
 
@@ -398,6 +402,7 @@ def batch_render_covers_pdf(
     result = batch_render_covers(documents=documents, general=general, out=out)
     if not result.get("success"):
         raise ValueError(result.get("error", "Batch render failed"))
+    open_pdf(result["path"])
     return f"Saved to: {result['path']} ({result.get('page_count', len(documents))} pages)"
 
 
@@ -430,6 +435,7 @@ def render_eval_sheet_pdf(
                                detailed=detailed, out=out)
     if not result.get("success"):
         raise ValueError(result.get("error", "Render failed"))
+    open_pdf(result["path"])
     return result["path"]
 
 
@@ -449,7 +455,63 @@ def batch_render_eval_sheets_pdf(
     result = batch_render_eval_sheets(documents=documents, detailed=detailed, out=out)
     if not result.get("success"):
         raise ValueError(result.get("error", "Batch render failed"))
+    open_pdf(result["path"])
     return f"Saved to: {result['path']} ({result.get('page_count', len(documents))} pages)"
+
+
+@mcp.tool()
+def open_pdf(path: str) -> str:
+    """Open a PDF file in the system's default viewer.
+
+    Call this automatically after any successful render_*_pdf tool call so the
+    user can immediately see the output without having to navigate to the file.
+    path: absolute or ~-relative path to the PDF file.
+    """
+    import subprocess
+    import sys
+
+    resolved = str(Path(path).expanduser().resolve())
+    if not resolved.endswith(".pdf"):
+        raise ValueError(f"Not a PDF file: {resolved}")
+    if not Path(resolved).exists():
+        raise ValueError(f"File not found: {resolved}")
+
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", resolved])
+    elif sys.platform.startswith("linux"):
+        subprocess.Popen(["xdg-open", resolved])
+    else:
+        subprocess.Popen(["start", "", resolved], shell=True)
+
+    return f"Opened: {resolved}"
+
+
+@mcp.tool()
+def get_cached_info() -> str:
+    """Return all locally cached user profile data — call this at the start of a session.
+
+    Returns known identifiers: MyDy email, UniClaIRE regno, USN (roll number from portal),
+    and which credential sets are configured. Useful so the LLM doesn't need to ask the user
+    for details it already has.
+
+    Note: portal regno (mobile number used to log in) and USN (university roll number, e.g.
+    23MTCO001) are different. Both are stored separately.
+    """
+    saved = _load_saved_creds()
+    lines = ["Cached profile data:"]
+
+    mydy_email = saved.get("mydy_email") or os.getenv("MYDY_EMAIL") or os.getenv("MYDY_USERNAME")
+    lines.append(f"  MyDy email:       {mydy_email or '(not set)'}")
+    lines.append(f"  MyDy password:    {'(set)' if saved.get('mydy_password') or os.getenv('MYDY_PASSWORD') else '(not set)'}")
+
+    portal_regno = saved.get("portal_regno") or os.getenv("PORTAL_REGNO")
+    lines.append(f"  Portal regno:     {portal_regno or '(not set)'}  ← mobile/login number for UniClaIRE")
+    lines.append(f"  Portal password:  {'(set)' if saved.get('portal_password') or os.getenv('PORTAL_PASSWORD') else '(not set)'}")
+
+    usn = saved.get("usn")
+    lines.append(f"  USN (roll no):    {usn or '(not yet fetched — call get_gpa to populate)'}  ← university roll number")
+
+    return "\n".join(lines)
 
 
 @mcp.tool()
@@ -470,7 +532,9 @@ def set_mydy_credentials(email: str, password: str) -> str:
 def set_portal_credentials(regno: str, password: str) -> str:
     """Save UniClaIRE student portal credentials to ~/.lms-buddy/credentials.json.
 
-    These are used by get_gpa. regno is your registration/mobile number.
+    regno is the mobile/registration number used to log in to the UniClaIRE portal —
+    NOT the university roll number (USN). The USN (e.g. 23MTCO001) is auto-saved
+    after a successful get_gpa call.
     Env vars PORTAL_REGNO and PORTAL_PASSWORD always take precedence if set.
     """
     if not regno.strip() or not password:
@@ -491,6 +555,10 @@ def get_gpa() -> str:
     if not creds:
         raise ValueError(_PORTAL_NOT_SET)
     data = fetch_gpa(creds[0], creds[1])
+
+    # Persist USN so the LLM can retrieve it without re-fetching
+    if data.get("usn"):
+        _save_creds({"usn": data["usn"]})
 
     lines = [f"USN: {data['usn']}", f"CGPA: {data['cgpa']}", ""]
     for g in data["groups"]:
