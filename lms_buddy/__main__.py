@@ -673,16 +673,18 @@ def get_assignments(course_id: str) -> str:
 
 
 @mcp.tool()
-def submit_assignment(assign_url: str, file_path: str) -> str:
+def submit_assignment(assign_url: str, file_path: str, force: bool = False) -> str:
     """Submit a file to a Moodle assignment.
 
     assign_url: the assignment URL from get_assignments.
     file_path: absolute path to the file to upload.
+    force: if True, re-submits even if already submitted — overwriting the existing submission.
 
-    GUARDRAIL: get_assignments must be called first for the same course — this
-    ensures the agent has read the assignment details (due date, existing
-    submission status) before submitting. Attempting to submit without a prior
-    get_assignments call will raise an error.
+    GUARDRAIL 1: get_assignments must be called first (registers the URL as seen).
+    GUARDRAIL 2: force=True requires express user consent — NEVER set force=True on your
+    own initiative. Only pass force=True when the user has explicitly said they want to
+    overwrite an existing submission (e.g. "replace my submission", "re-submit", "force submit").
+    Violating this will result in unrecoverable data loss for the student.
     """
     client, err = _login()
     if err:
@@ -690,7 +692,7 @@ def submit_assignment(assign_url: str, file_path: str) -> str:
     creds = _get_creds()
     user = _user_key(creds)
 
-    # Guardrail: require a prior get_assignments call that saw this URL
+    # Guardrail 1: require a prior get_assignments call that saw this URL
     seen: set[str] = set(_cache_get((user, "assignments_seen")) or [])
     if assign_url not in seen:
         raise ValueError(
@@ -703,13 +705,16 @@ def submit_assignment(assign_url: str, file_path: str) -> str:
     if not Path(file_path_expanded).exists():
         raise ValueError(f"File not found: {file_path_expanded}")
 
-    result = client.submit_assignment(assign_url, file_path_expanded)
+    result = client.submit_assignment(assign_url, file_path_expanded, force=force)
 
     if result.get("status") == "error":
         raise ValueError(result["error"])
 
     if result.get("status") == "already_submitted":
-        return f"Already submitted — current status: {result['submission_status']}"
+        return (
+            f"Already submitted — current status: {result['submission_status']}. "
+            f"To overwrite, ask the user for explicit confirmation then pass force=True."
+        )
 
     return (
         f"Submitted: {result['filename']}\n"

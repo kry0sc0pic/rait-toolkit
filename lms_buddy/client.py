@@ -558,7 +558,7 @@ class MydyClient:
                                     "grading_status": None, "grade": None, "time_remaining": None})
         return assignments
 
-    def submit_assignment(self, assign_url: str, file_path: str) -> dict:
+    def submit_assignment(self, assign_url: str, file_path: str, force: bool = False) -> dict:
         """Upload a file and submit it to a Moodle assignment.
 
         Two-step process mirroring the browser flow:
@@ -566,6 +566,7 @@ class MydyClient:
           2. POST multipart upload to repository_ajax.php
           3. POST save form to finalize the submission
 
+        force: if True, skips the already-submitted guard and re-submits.
         Returns a dict with status/error keys.
         """
         if not self.logged_in:
@@ -574,7 +575,7 @@ class MydyClient:
         import os
         import mimetypes
 
-        # -- pre-check: bail if already submitted --------------------------
+        # -- pre-check: bail if already submitted (unless force=True) ------
         self._rate_limit("activity")
         assign_id_pre = (re.search(r"id=(\d+)", assign_url) or {}).group(1) if re.search(r"id=(\d+)", assign_url) else None
         if assign_id_pre:
@@ -587,7 +588,7 @@ class MydyClient:
                         cells = row.find_all(["td", "th"])
                         if len(cells) >= 2 and "submission status" in cells[0].get_text(strip=True).lower():
                             existing = cells[1].get_text(strip=True)
-                            if "submitted" in existing.lower():
+                            if "submitted" in existing.lower() and not force:
                                 return {"status": "already_submitted", "submission_status": existing}
                             break
             except requests.RequestException:
