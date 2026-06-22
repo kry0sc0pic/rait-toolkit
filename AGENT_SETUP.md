@@ -93,11 +93,37 @@ Call `self_update` to `git pull` and restart the server process. Claude Code/Des
 
 ---
 
+## Assignment submission
+
+### Workflow (strict order)
+
+1. Call `get_assignments(course_id)` — lists all assignments with due date, submission status, and grade. This also **registers the URLs as seen** so the submit guardrail allows them.
+2. Call `submit_assignment(assign_url, file_path)` — uploads and finalises.
+
+**Never call `submit_assignment` without a prior `get_assignments` call** — it will raise an error if the URL hasn't been registered.
+
+### `force` parameter
+
+`submit_assignment` has a `force=False` default. When `force=False`:
+- If the assignment is already submitted, the call returns `already_submitted` and does nothing.
+
+When `force=True`:
+- The existing submission is overwritten with the new file.
+- **You must NEVER set `force=True` on your own initiative.** Only use it when the user has explicitly said they want to replace/overwrite their submission (e.g. "replace my submission", "re-submit with the new file", "force submit").
+- Setting `force=True` without explicit user consent is a violation that could cause unrecoverable data loss.
+
+### Blank placeholder PDF
+
+A blank placeholder PDF is kept at `~/.lms-buddy/blank_submission.pdf` (auto-generated on first use). When `max_hitrate` detects pending assignment activities with no submission, it will prompt you to ask the user whether they want a blank PDF submitted to fulfil the completion requirement. Use `AskFollowupQuestion` for this — do not submit automatically.
+
+---
+
 ## Tool reference summary
 
 | Category | Tools |
 |----------|-------|
 | LMS | `list_subjects`, `list_files`, `download_file`, `get_hitrates`, `max_hitrate`, `get_overall_attendance`, `get_course_attendance`, `get_semesters` |
+| Assignments | `get_assignments`, `submit_assignment` |
 | GPA | `get_gpa` |
 | PDF | `render_cover_pdf`, `batch_render_covers_pdf`, `render_eval_sheet_pdf`, `batch_render_eval_sheets_pdf` |
 | Utility | `get_cached_info`, `set_mydy_credentials`, `set_portal_credentials`, `open_pdf`, `self_update` |

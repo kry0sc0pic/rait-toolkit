@@ -140,7 +140,7 @@ The server runs over stdio via `uvx`. Point your client to:
 
 ---
 
-## Tools (18 total)
+## Tools (20 total)
 
 ### LMS — MyDy
 
@@ -150,10 +150,12 @@ The server runs over stdio via `uvx`. Point your client to:
 | `list_files` | Downloadable materials in a course |
 | `download_file` | Download a file to disk (defaults to `~/Downloads`) |
 | `get_hitrates` | Course Progress % for all current courses |
-| `max_hitrate` | Visit every pending activity for a course to push it to 100% |
+| `max_hitrate` | Visit every pending activity for a course to push it to 100%; detects unsubmitted assignments and prompts for blank placeholder upload |
 | `get_overall_attendance` | Aggregate attendance + per-subject breakdown with per-class drill-down IDs |
 | `get_course_attendance` | Per-class attendance records for a subject (date, time, present/absent) |
 | `get_semesters` | Courses grouped by semester label (Semester V, Semester VI, …) |
+| `get_assignments` | List assignments for a course with submission status, grade, and due date |
+| `submit_assignment` | Upload a file and submit it to an assignment; `force=True` overwrites an existing submission (requires explicit user consent) |
 
 ### GPA — UniClaIRE portal
 
@@ -237,7 +239,7 @@ vercel           # deploy
 ```
 rait-toolkit/
 ├── lms_buddy/               # uvx-installable MCP package
-│   ├── __main__.py          #   FastMCP server — 18 tools + 1 prompt
+│   ├── __main__.py          #   FastMCP server — 20 tools + 1 prompt
 │   ├── client.py            #   MyDy LMS HTTP client
 │   ├── gpa.py               #   UniClaIRE portal GPA fetcher
 │   ├── render.py            #   LaTeX PDF rendering
