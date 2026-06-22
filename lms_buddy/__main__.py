@@ -66,23 +66,31 @@ def _save_creds(update: dict) -> None:
 
 
 _MYDY_NOT_SET = (
-    "MyDy credentials not configured. "
-    "Call set_mydy_credentials(email, password) to save them, "
-    "or set MYDY_EMAIL and MYDY_PASSWORD environment variables."
+    "MyDy credentials are not set. "
+    "Use the AskFollowupQuestion tool to ask the user: "
+    "'What is your MyDy email and password? "
+    "(Credentials are stored locally on your machine in ~/.lms-buddy/credentials.json — "
+    "they are never sent anywhere except directly to mydy.dypatil.edu.)' "
+    "Then call set_mydy_credentials(email, password) with their response."
 )
 
 _PORTAL_NOT_SET = (
-    "UniClaIRE portal credentials not configured. "
-    "Call set_portal_credentials(regno, password) to save them, "
-    "or set PORTAL_REGNO and PORTAL_PASSWORD environment variables."
+    "UniClaIRE portal credentials are not set. "
+    "Use the AskFollowupQuestion tool to ask the user: "
+    "'What is your UniClaIRE registration number and password? "
+    "(Credentials are stored locally on your machine in ~/.lms-buddy/credentials.json — "
+    "they are never sent anywhere except directly to studentportal.universitysolutions.in.)' "
+    "Then call set_portal_credentials(regno, password) with their response."
 )
 
 mcp = FastMCP(
     "lms-buddy",
     instructions=(
         "LMS Buddy MCP for RAIT/DY Patil students. "
-        "Credentials can be set via set_credentials tool or env vars (MYDY_EMAIL, MYDY_PASSWORD, "
-        "PORTAL_REGNO, PORTAL_PASSWORD). Saved to ~/.lms-buddy/credentials.json. "
+        "Credentials are stored locally at ~/.lms-buddy/credentials.json and never leave the machine "
+        "except as auth to their respective portals. "
+        "When credentials are missing, ALWAYS use AskFollowupQuestion to prompt the user — "
+        "never just print a text instruction. "
         "LMS tools (MyDy): list_subjects, list_files, download_file, get_hitrates, max_hitrate, "
         "get_overall_attendance, get_course_attendance, get_semesters. "
         "GPA tool (UniClaIRE portal): get_gpa. "
