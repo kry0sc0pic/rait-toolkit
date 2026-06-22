@@ -6,6 +6,7 @@ Templates live in lms_buddy/templates/.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -97,21 +98,53 @@ def _compile(tex_source: str, out_path: str) -> dict:
         return {"success": False, "error": str(e)}
 
 
+def _split_latex_document(doc: str) -> tuple[str, str]:
+    """Split a complete LaTeX document into preamble and document body."""
+    begin = doc.find(r"\begin{document}")
+    end = doc.rfind(r"\end{document}")
+    if begin < 0 or end <= begin:
+        raise ValueError("Document missing \\begin{document} / \\end{document}.")
+    preamble = doc[:begin]
+    body = doc[begin + len(r"\begin{document}"):end].strip()
+    return preamble, body
+
+
+def _extract_macro_lines(preamble: str) -> list[str]:
+    return re.findall(r"^\\newcommand\{[^\n]+$", preamble, flags=re.MULTILINE)
+
+
+def _strip_macro_lines(preamble: str) -> str:
+    return re.sub(r"^\\newcommand\{[^\n]+\n?", "", preamble, flags=re.MULTILINE)
+
+
+def _as_renewcommand(lines: list[str]) -> list[str]:
+    return [line.replace(r"\newcommand", r"\renewcommand", 1) for line in lines]
+
+
 def _multi_page(documents: list[str]) -> str:
-    """Concatenate multiple complete LaTeX documents into a single one."""
-    pages = []
-    for i, doc in enumerate(documents):
-        if i == 0:
-            pages.append(doc)
-        else:
-            start = doc.find(r"\begin{document}")
-            end   = doc.find(r"\end{document}")
-            if start >= 0 and end > start:
-                content = doc[start + len(r"\begin{document}"):end].strip()
-                pages.append(r"\newpage" + "\n" + content)
-            else:
-                pages.append(r"\newpage" + "\n" + doc)
-    return pages[0] + "\n" + "".join(pages[1:])
+    """Merge complete LaTeX documents into one valid multi-page document."""
+    if not documents:
+        raise ValueError("Need at least one document to build a batch PDF.")
+
+    preamble, first_body = _split_latex_document(documents[0])
+    first_macros = _extract_macro_lines(preamble)
+    common_preamble = _strip_macro_lines(preamble)
+
+    page_chunks = []
+    if first_macros:
+        page_chunks.append("\n".join(first_macros + [first_body]))
+    else:
+        page_chunks.append(first_body)
+
+    for doc in documents[1:]:
+        page_preamble, body = _split_latex_document(doc)
+        macros = _extract_macro_lines(page_preamble)
+        chunk_parts = _as_renewcommand(macros) if macros else []
+        chunk_parts.append(body)
+        page_chunks.append("\n".join(chunk_parts))
+
+    merged_body = "\n\\newpage\n".join(page_chunks)
+    return f"{common_preamble}\\begin{{document}}\n{merged_body}\n\\end{{document}}\n"
 
 
 # -- public API ---------------------------------------------------------------
