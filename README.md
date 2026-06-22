@@ -8,14 +8,40 @@ MCP server + Claude plugin for D.Y. Patil RAIT students. Connects Claude Desktop
 
 ### Prerequisites
 
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) — `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- pdflatex / lualatex / xelatex on PATH (for PDF rendering) — e.g. `brew install --cask mactex-no-gui`
+**macOS**
+```sh
+# uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# LaTeX (for PDF rendering)
+brew install --cask mactex-no-gui
+```
+
+**Ubuntu / Debian**
+```sh
+# uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# LaTeX (for PDF rendering)
+sudo apt update && sudo apt install -y texlive-latex-base texlive-fonts-recommended texlive-latex-extra
+```
+
+---
+
+### Clone the repo
+
+```sh
+git clone https://github.com/kry0sc0pic/rait-toolkit
+cd rait-toolkit
+```
 
 ---
 
 ### Claude Desktop
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+**macOS** — edit `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+**Ubuntu** — edit `~/.config/Claude/claude_desktop_config.json`
 
 ```json
 {
@@ -41,12 +67,12 @@ Replace `/path/to/rait-toolkit` with your local clone path. Restart Claude Deskt
 ### Claude Code (CLI)
 
 ```sh
-git clone https://github.com/kry0sc0pic/rait-toolkit
-cd rait-toolkit
 /plugin install .
 ```
 
-Then set credentials in Claude Code settings (Cmd+,) → Environment:
+Run from inside the cloned repo. Then set credentials in Claude Code settings:
+- **macOS**: Cmd+, → Environment
+- **Ubuntu**: `claude config` or edit `~/.claude/settings.json`
 ```json
 {
   "MYDY_EMAIL": "your@dypatil.edu",
@@ -204,6 +230,7 @@ rait-toolkit/
 - Python 3.10+
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - Valid MyDy LMS account (D.Y. Patil RAIT)
+- macOS or Ubuntu/Debian (Windows untested)
 
 ## License
 
