@@ -48,7 +48,7 @@ def _cache_set(key: tuple, value, ttl: int) -> None:
         _CACHE_STORE[key] = (time.time() + ttl, value)
 
 
-def _cache_invalidate_prefix(prefix: tuple) -> None:
+def _cache_invalidate_prefix(prefix: tuple) -> None:  # noqa: F401 — re-exported
     with _CACHE_LOCK:
         for key in list(_CACHE_STORE.keys()):
             if key[: len(prefix)] == prefix:

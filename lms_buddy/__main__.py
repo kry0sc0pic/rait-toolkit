@@ -40,6 +40,8 @@ from .render import (
 )
 from .tools import (
     _cache_invalidate_prefix,
+    _cache_get,
+    _cache_set,
     _tool_get_hitrates,
     _tool_list_files,
     _tool_list_subjects,
@@ -112,6 +114,26 @@ def _with_diff(tool: str, args: dict, new_text: str) -> str:
     return f"[Changes since last read]\n```diff\n{diff}\n```\n\n{new_text}"
 
 
+_BLANK_PDF_PATH = _LMS_DIR / "blank_submission.pdf"
+
+_BLANK_PDF_BYTES = (
+    b"%PDF-1.4\n"
+    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+    b"3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\n"
+    b"xref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n"
+    b"0000000115 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n217\n%%EOF\n"
+)
+
+
+def _ensure_blank_pdf() -> str:
+    """Write the blank PDF to disk once and return its path."""
+    if not _BLANK_PDF_PATH.exists():
+        _LMS_DIR.mkdir(parents=True, exist_ok=True)
+        _BLANK_PDF_PATH.write_bytes(_BLANK_PDF_BYTES)
+    return str(_BLANK_PDF_PATH)
+
+
 def _load_saved_creds() -> dict:
     try:
         return json.loads(_CRED_FILE.read_text())
@@ -154,7 +176,9 @@ mcp = FastMCP(
         "When credentials are missing, ALWAYS use AskFollowupQuestion to prompt the user — "
         "never just print a text instruction. "
         "LMS tools (MyDy): list_subjects, list_files, download_file, get_hitrates, max_hitrate, "
-        "get_overall_attendance, get_course_attendance, get_semesters. "
+        "get_overall_attendance, get_course_attendance, get_semesters, "
+        "get_assignments, submit_assignment. "
+        "IMPORTANT: Always call get_assignments before submit_assignment — this is enforced. "
         "GPA tool (UniClaIRE portal): get_gpa. "
         "PDF tools: render_cover_pdf, batch_render_covers_pdf, render_eval_sheet_pdf, "
         "batch_render_eval_sheets_pdf — each automatically opens the PDF after saving. "
@@ -275,19 +299,81 @@ def max_hitrate(course_id: str, course_name: str = "") -> str:
     """Maximize the Course Progress hit rate for a single course.
 
     Visits every pending activity and returns before/after percentage.
+    If any pending activities are unsubmitted assignments, the tool flags them
+    and instructs the agent to ask the user whether to upload a blank placeholder PDF.
+    The blank PDF is stored at ~/.lms-buddy/blank_submission.pdf.
     """
     client, err = _login()
     if err:
         raise ValueError(err)
     creds = _get_creds()
     user = _user_key(creds)
+
+    # Snapshot pending items before maxxing so we can identify assignments
+    progress = client.get_course_progress(course_id)
+    pending_before = progress.get("pending", []) if isinstance(progress, dict) else []
+    pending_assign_urls = [
+        item["url"] for item in pending_before
+        if "/mod/assign/" in item.get("url", "")
+    ]
+
     args = {"course_id": course_id}
     if course_name:
         args["course_name"] = course_name
     result = _tool_max_hitrate(client, args, user)
     if result.get("isError"):
         raise ValueError(_text(result))
-    return _with_diff("max_hitrate", {"course_id": course_id}, _text(result))
+
+    output = _with_diff("max_hitrate", {"course_id": course_id}, _text(result))
+
+    # Check which assignment URLs are still unsubmitted
+    unsubmitted = []
+    for url in pending_assign_urls:
+        assign_id_m = __import__("re").search(r"id=(\d+)", url)
+        if not assign_id_m:
+            continue
+        try:
+            resp = client.session.get(url)
+            from bs4 import BeautifulSoup as _BS
+            soup = _BS(resp.text, "html.parser")
+            table = soup.find("table", class_="generaltable") or soup.find("table", class_="submissionstatustable")
+            sub_status = ""
+            if table:
+                for row in table.find_all("tr"):
+                    cells = row.find_all(["td", "th"])
+                    if len(cells) >= 2 and "submission status" in cells[0].get_text(strip=True).lower():
+                        sub_status = cells[1].get_text(strip=True)
+                        break
+            h2 = soup.find("h2")
+            name = h2.get_text(strip=True) if h2 else url
+            if "submitted" not in sub_status.lower():
+                unsubmitted.append({"name": name, "url": url, "submission_status": sub_status or "No submission"})
+        except Exception:
+            pass
+
+    if unsubmitted:
+        blank_path = _ensure_blank_pdf()
+        # Register these URLs as seen so submit_assignment will allow them
+        seen: set[str] = set(_cache_get((user, "assignments_seen")) or [])
+        for a in unsubmitted:
+            seen.add(a["url"])
+        _cache_set((user, "assignments_seen"), list(seen), ttl=3600)
+
+        lines = [output, "", "⚠️  Unsubmitted assignments detected:"]
+        for a in unsubmitted:
+            lines.append(f"  - {a['name']} ({a['submission_status']})")
+            lines.append(f"    {a['url']}")
+        lines.append("")
+        lines.append(
+            f"Use AskFollowupQuestion to ask the user: "
+            f"'The following assignments have no submission. "
+            f"Would you like me to upload a blank placeholder PDF to mark them as submitted? "
+            f"(A blank PDF is stored at {blank_path})' "
+            f"If they agree, call submit_assignment for each URL above with file_path='{blank_path}'."
+        )
+        return "\n".join(lines)
+
+    return output
 
 
 @mcp.tool()
@@ -542,6 +628,94 @@ def set_portal_credentials(regno: str, password: str) -> str:
         raise ValueError("Both regno and password are required.")
     _save_creds({"portal_regno": regno.strip(), "portal_password": password})
     return f"UniClaIRE portal credentials saved to {_CRED_FILE}."
+
+
+@mcp.tool()
+def get_assignments(course_id: str) -> str:
+    """List assignments for a course with their submission and grading status.
+
+    course_id: the id from list_subjects.
+    Returns each assignment's name, URL, due date, submission status, and grading status.
+    IMPORTANT: calling this tool is required before submit_assignment — it registers
+    the assignment URL as "seen" so the submit guardrail allows it through.
+    """
+    client, err = _login()
+    if err:
+        raise ValueError(err)
+    creds = _get_creds()
+    user = _user_key(creds)
+
+    result = client.get_assignments(course_id)
+    if isinstance(result, str):
+        raise ValueError(result)
+
+    if not result:
+        return f"No assignments found in course {course_id}."
+
+    # Register each assignment URL as seen so submit_assignment can proceed
+    seen: set[str] = set(_cache_get((user, "assignments_seen")) or [])
+    for a in result:
+        if a.get("url"):
+            seen.add(a["url"])
+    _cache_set((user, "assignments_seen"), list(seen), ttl=3600)
+
+    lines = [f"Assignments for course {course_id}:"]
+    for a in result:
+        status = a.get("submission_status") or "Not submitted"
+        grade = a.get("grade") or "—"
+        due = a.get("due_date") or "—"
+        lines.append(f"\n- {a['name']}")
+        lines.append(f"  URL: {a['url']}")
+        lines.append(f"  Due: {due}")
+        lines.append(f"  Submission: {status}")
+        lines.append(f"  Grade: {grade}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def submit_assignment(assign_url: str, file_path: str) -> str:
+    """Submit a file to a Moodle assignment.
+
+    assign_url: the assignment URL from get_assignments.
+    file_path: absolute path to the file to upload.
+
+    GUARDRAIL: get_assignments must be called first for the same course — this
+    ensures the agent has read the assignment details (due date, existing
+    submission status) before submitting. Attempting to submit without a prior
+    get_assignments call will raise an error.
+    """
+    client, err = _login()
+    if err:
+        raise ValueError(err)
+    creds = _get_creds()
+    user = _user_key(creds)
+
+    # Guardrail: require a prior get_assignments call that saw this URL
+    seen: set[str] = set(_cache_get((user, "assignments_seen")) or [])
+    if assign_url not in seen:
+        raise ValueError(
+            f"Assignment not found in seen list. "
+            f"Call get_assignments(course_id) first to load assignment details "
+            f"before submitting to: {assign_url}"
+        )
+
+    file_path_expanded = str(Path(file_path).expanduser().resolve())
+    if not Path(file_path_expanded).exists():
+        raise ValueError(f"File not found: {file_path_expanded}")
+
+    result = client.submit_assignment(assign_url, file_path_expanded)
+
+    if result.get("status") == "error":
+        raise ValueError(result["error"])
+
+    if result.get("status") == "already_submitted":
+        return f"Already submitted — current status: {result['submission_status']}"
+
+    return (
+        f"Submitted: {result['filename']}\n"
+        f"Assignment: {result['assign_id']}\n"
+        f"Status: {result['submission_status']}"
+    )
 
 
 @mcp.tool()
