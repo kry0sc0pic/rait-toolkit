@@ -1,0 +1,53 @@
+% SIMPLE STYLE PREAMBLE
+% Clean lab-record format. Section heading = experiment title with a titlerule.
+% Sub-fields (Aim, Theory, etc.) are bold inline labels, not headings.
+
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{setspace}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{parskip}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+\setstretch{1.15}
+
+\titleformat{\section}{\large\bfseries\centering}{}{0em}{}[\titlerule]
+\titlespacing{\section}{0pt}{12pt}{8pt}
+
+\setlist[enumerate]{noitemsep, topsep=4pt}
+
+\begin{document}
+
+% ============ EXPERIMENT BLOCK TEMPLATE (repeat, \newpage between) ============
+%
+% \section*{Experiment N: <Title>}
+%
+% \textbf{Aim}\\
+% <one sentence>.
+%
+% \textbf{Software Required}\\
+% <comma-separated tools>.
+%
+% \textbf{Theory}
+%
+% <Paragraph 1: core concept and how it works.>
+%
+% <Paragraph 2: mechanism, variants, metrics, or real-world use.>
+%
+% \textbf{Algorithm / Procedure}
+% \begin{enumerate}
+%     \item <imperative step>
+%     \item ...
+% \end{enumerate}
+%
+% \textbf{Conclusion}\\
+% <one or two sentences>.
+%
+% =============================================================================
+
+% ... experiment blocks go here ...
+
+\end{document}
