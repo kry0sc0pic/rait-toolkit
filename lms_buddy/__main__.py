@@ -21,12 +21,14 @@ Usage (Claude Desktop config):
 """
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from .client import MydyClient
+from .gpa import fetch_gpa
 from .render import (
     batch_render_covers,
     batch_render_eval_sheets,
@@ -42,30 +44,67 @@ from .tools import (
     _user_key,
 )
 
+# -- credential store ---------------------------------------------------------
+# Saved to ~/.lms-buddy/credentials.json so the user only has to enter them once.
+# Env vars (MYDY_EMAIL, MYDY_PASSWORD, etc.) always take precedence over saved creds.
+
+_CRED_FILE = Path.home() / ".lms-buddy" / "credentials.json"
+
+
+def _load_saved_creds() -> dict:
+    try:
+        return json.loads(_CRED_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def _save_creds(update: dict) -> None:
+    _CRED_FILE.parent.mkdir(parents=True, exist_ok=True)
+    existing = _load_saved_creds()
+    existing.update(update)
+    _CRED_FILE.write_text(json.dumps(existing, indent=2))
+
+
+def _resolve(env_key: str, saved_key: str, saved: dict) -> str:
+    return os.getenv(env_key, "") or saved.get(saved_key, "")
+
 mcp = FastMCP(
     "lms-buddy",
     instructions=(
-        "LMS Buddy MCP. Set MYDY_EMAIL (or MYDY_USERNAME) and MYDY_PASSWORD. "
-        "Optional: MYDY_AUTH_MODE=token to extract MoodleSession/sesskey after login "
-        "(default: scrape). "
-        "LMS tools: list_subjects, list_files, download_file, get_hitrates, max_hitrate, "
+        "LMS Buddy MCP for RAIT/DY Patil students. "
+        "Credentials can be set via set_credentials tool or env vars (MYDY_EMAIL, MYDY_PASSWORD, "
+        "PORTAL_REGNO, PORTAL_PASSWORD). Saved to ~/.lms-buddy/credentials.json. "
+        "LMS tools (MyDy): list_subjects, list_files, download_file, get_hitrates, max_hitrate, "
         "get_overall_attendance, get_course_attendance, get_semesters. "
+        "GPA tool (UniClaIRE portal): get_gpa. "
         "PDF tools: render_cover_pdf, batch_render_covers_pdf, render_eval_sheet_pdf, "
-        "batch_render_eval_sheets_pdf — require pdflatex/lualatex/xelatex on PATH."
+        "batch_render_eval_sheets_pdf. "
+        "Utility: set_credentials, self_update."
     ),
 )
 
 
 def _get_creds() -> tuple[str, str] | None:
-    email = os.getenv("MYDY_EMAIL") or os.getenv("MYDY_USERNAME", "")
-    password = os.getenv("MYDY_PASSWORD", "")
+    saved = _load_saved_creds()
+    email = os.getenv("MYDY_EMAIL") or os.getenv("MYDY_USERNAME") or saved.get("mydy_email", "")
+    password = os.getenv("MYDY_PASSWORD") or saved.get("mydy_password", "")
     return (email.strip(), password) if email and password else None
+
+
+def _get_portal_creds() -> tuple[str, str] | None:
+    saved = _load_saved_creds()
+    regno = os.getenv("PORTAL_REGNO") or saved.get("portal_regno", "")
+    passwd = os.getenv("PORTAL_PASSWORD") or saved.get("portal_password", "")
+    return (regno.strip(), passwd) if regno and passwd else None
 
 
 def _login() -> tuple[MydyClient | None, str | None]:
     creds = _get_creds()
     if not creds:
-        return None, "Set MYDY_EMAIL and MYDY_PASSWORD environment variables."
+        return None, (
+            "No MyDy credentials found. Call set_credentials with mydy_email and mydy_password, "
+            "or set MYDY_EMAIL and MYDY_PASSWORD environment variables."
+        )
     client = MydyClient()
     result = client.login(creds[0], creds[1])
     return (client, None) if result.get("success") else (None, result.get("message") or "Login failed.")
@@ -333,6 +372,64 @@ def batch_render_eval_sheets_pdf(
     if not result.get("success"):
         raise ValueError(result.get("error", "Batch render failed"))
     return f"Saved to: {result['path']} ({result.get('page_count', len(documents))} pages)"
+
+
+@mcp.tool()
+def set_credentials(
+    mydy_email: str = "",
+    mydy_password: str = "",
+    portal_regno: str = "",
+    portal_password: str = "",
+) -> str:
+    """Save credentials to ~/.lms-buddy/credentials.json for future use.
+
+    mydy_email + mydy_password: for MyDy LMS (list_subjects, download, hitrates, etc.)
+    portal_regno + portal_password: for UniClaIRE student portal (get_gpa)
+
+    Only the fields you provide are updated — omit any you don't want to change.
+    Env vars always override saved credentials.
+    """
+    update: dict = {}
+    if mydy_email.strip():
+        update["mydy_email"] = mydy_email.strip()
+    if mydy_password:
+        update["mydy_password"] = mydy_password
+    if portal_regno.strip():
+        update["portal_regno"] = portal_regno.strip()
+    if portal_password:
+        update["portal_password"] = portal_password
+    if not update:
+        raise ValueError("Provide at least one credential field to save.")
+    _save_creds(update)
+    saved_keys = ", ".join(update.keys())
+    return f"Saved to {_CRED_FILE}: {saved_keys}"
+
+
+@mcp.tool()
+def get_gpa() -> str:
+    """Fetch semester-wise SGPA and cumulative CGPA from the UniClaIRE student portal.
+
+    Requires portal_regno and portal_password (set via set_credentials or
+    PORTAL_REGNO / PORTAL_PASSWORD env vars).
+    Returns CGPA, per-semester SGPA, and course-level grade breakdown.
+    """
+    creds = _get_portal_creds()
+    if not creds:
+        raise ValueError(
+            "No UniClaIRE portal credentials found. "
+            "Call set_credentials with portal_regno and portal_password, "
+            "or set PORTAL_REGNO and PORTAL_PASSWORD environment variables."
+        )
+    data = fetch_gpa(creds[0], creds[1])
+
+    lines = [f"USN: {data['usn']}", f"CGPA: {data['cgpa']}", ""]
+    for g in data["groups"]:
+        lines.append(f"Semester {g['id']} — SGPA: {g['sgpa']}")
+        for c in g["courses"]:
+            grade_label = c["grade"] or "—"
+            lines.append(f"  {c['name']} ({c.get('courseType', '')}) | {c['credits']} cr | {grade_label}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 @mcp.tool()
