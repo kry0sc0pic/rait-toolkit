@@ -21,8 +21,11 @@ Usage (Claude Desktop config):
 """
 from __future__ import annotations
 
+import difflib
+import hashlib
 import json
 import os
+import time
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -48,7 +51,65 @@ from .tools import (
 # Saved to ~/.lms-buddy/credentials.json so the user only has to enter them once.
 # Env vars (MYDY_EMAIL, MYDY_PASSWORD, etc.) always take precedence over saved creds.
 
-_CRED_FILE = Path.home() / ".lms-buddy" / "credentials.json"
+_LMS_DIR   = Path.home() / ".lms-buddy"
+_CRED_FILE = _LMS_DIR / "credentials.json"
+_SNAP_DIR  = _LMS_DIR / "snapshots"
+
+
+# -- snapshot store -----------------------------------------------------------
+# Each tool response is saved to ~/.lms-buddy/snapshots/<tool>/<key>.json
+# where key = sha256(canonical args). On subsequent calls the previous snapshot
+# is diffed against the new response so the LLM can see what changed.
+
+def _snap_key(args: dict) -> str:
+    canon = json.dumps(args, sort_keys=True)
+    return hashlib.sha256(canon.encode()).hexdigest()[:16]
+
+
+def _snap_path(tool: str, key: str) -> Path:
+    p = _SNAP_DIR / tool
+    p.mkdir(parents=True, exist_ok=True)
+    return p / f"{key}.json"
+
+
+def _load_snapshot(tool: str, key: str) -> dict | None:
+    try:
+        return json.loads(_snap_path(tool, key).read_text())
+    except Exception:
+        return None
+
+
+def _save_snapshot(tool: str, key: str, text: str) -> None:
+    _snap_path(tool, key).write_text(
+        json.dumps({"ts": time.time(), "text": text}, indent=2)
+    )
+
+
+def _diff_text(old: str, new: str) -> str | None:
+    """Return a unified diff string if old != new, else None."""
+    if old == new:
+        return None
+    diff = list(difflib.unified_diff(
+        old.splitlines(keepends=True),
+        new.splitlines(keepends=True),
+        fromfile="previous",
+        tofile="current",
+        lineterm="",
+    ))
+    return "".join(diff) if diff else None
+
+
+def _with_diff(tool: str, args: dict, new_text: str) -> str:
+    """Save snapshot and prepend a diff block if anything changed."""
+    key = _snap_key(args)
+    prev = _load_snapshot(tool, key)
+    _save_snapshot(tool, key, new_text)
+    if prev is None:
+        return new_text
+    diff = _diff_text(prev["text"], new_text)
+    if diff is None:
+        return f"[No changes since last read]\n\n{new_text}"
+    return f"[Changes since last read]\n```diff\n{diff}\n```\n\n{new_text}"
 
 
 def _load_saved_creds() -> dict:
@@ -143,7 +204,7 @@ def list_subjects(include_all: bool = False) -> str:
     result = _tool_list_subjects(client, {"include_all": include_all}, user)
     if result.get("isError"):
         raise ValueError(_text(result))
-    return _text(result)
+    return _with_diff("list_subjects", {"include_all": include_all}, _text(result))
 
 
 @mcp.tool()
@@ -160,7 +221,7 @@ def list_files(course_id: str) -> str:
     result = _tool_list_files(client, {"course_id": course_id}, user)
     if result.get("isError"):
         raise ValueError(_text(result))
-    return _text(result)
+    return _with_diff("list_files", {"course_id": course_id}, _text(result))
 
 
 @mcp.tool()
@@ -202,7 +263,7 @@ def get_hitrates() -> str:
     result = _tool_get_hitrates(client, {}, user)
     if result.get("isError"):
         raise ValueError(_text(result))
-    return _text(result)
+    return _with_diff("get_hitrates", {}, _text(result))
 
 
 @mcp.tool()
@@ -222,7 +283,7 @@ def max_hitrate(course_id: str, course_name: str = "") -> str:
     result = _tool_max_hitrate(client, args, user)
     if result.get("isError"):
         raise ValueError(_text(result))
-    return _text(result)
+    return _with_diff("max_hitrate", {"course_id": course_id}, _text(result))
 
 
 @mcp.tool()
@@ -248,7 +309,8 @@ def get_overall_attendance() -> str:
         altid_str = f" (altid={s['altid']})" if s.get("altid") else ""
         lines.append(f"- {s['subject']}: {s['percentage']}% "
                      f"({s['present']}/{s['total_classes']}){altid_str}")
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    return _with_diff("get_overall_attendance", {}, text)
 
 
 @mcp.tool()
@@ -267,7 +329,8 @@ def get_course_attendance(altid: int) -> str:
     if not result:
         return "No attendance records found."
     lines = [f"- {r['date']} {r['time']} | {r['status']}" for r in result]
-    return f"{len(result)} classes:\n" + "\n".join(lines)
+    text = f"{len(result)} classes:\n" + "\n".join(lines)
+    return _with_diff("get_course_attendance", {"altid": altid}, text)
 
 
 @mcp.tool()
@@ -290,7 +353,8 @@ def get_semesters() -> str:
         lines.append(sem["semester"] + ":")
         for s in sem["subjects"]:
             lines.append(f"  - [{s['id']}] {s['name']}")
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    return _with_diff("get_semesters", {}, text)
 
 
 @mcp.tool()
@@ -435,7 +499,8 @@ def get_gpa() -> str:
             grade_label = c["grade"] or "—"
             lines.append(f"  {c['name']} ({c.get('courseType', '')}) | {c['credits']} cr | {grade_label}")
         lines.append("")
-    return "\n".join(lines).rstrip()
+    text = "\n".join(lines).rstrip()
+    return _with_diff("get_gpa", {}, text)
 
 
 @mcp.tool()
