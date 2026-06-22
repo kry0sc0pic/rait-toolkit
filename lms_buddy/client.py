@@ -558,6 +558,161 @@ class MydyClient:
                                     "grading_status": None, "grade": None, "time_remaining": None})
         return assignments
 
+    def submit_assignment(self, assign_url: str, file_path: str) -> dict:
+        """Upload a file and submit it to a Moodle assignment.
+
+        Two-step process mirroring the browser flow:
+          1. GET editsubmission page → scrape sesskey, itemid, userid, ctx_id, author
+          2. POST multipart upload to repository_ajax.php
+          3. POST save form to finalize the submission
+
+        Returns a dict with status/error keys.
+        """
+        if not self.logged_in:
+            return {"status": "error", "error": "Not logged in."}
+
+        import os
+        import mimetypes
+
+        # -- pre-check: bail if already submitted --------------------------
+        self._rate_limit("activity")
+        assign_id_pre = (re.search(r"id=(\d+)", assign_url) or {}).group(1) if re.search(r"id=(\d+)", assign_url) else None
+        if assign_id_pre:
+            try:
+                pre_resp = self.session.get(f"{RAIT_URL}/mod/assign/view.php?id={assign_id_pre}&action=view")
+                pre_soup = BeautifulSoup(pre_resp.text, "html.parser")
+                pre_table = pre_soup.find("table", class_="generaltable") or pre_soup.find("table", class_="submissionstatustable")
+                if pre_table:
+                    for row in pre_table.find_all("tr"):
+                        cells = row.find_all(["td", "th"])
+                        if len(cells) >= 2 and "submission status" in cells[0].get_text(strip=True).lower():
+                            existing = cells[1].get_text(strip=True)
+                            if "submitted" in existing.lower():
+                                return {"status": "already_submitted", "submission_status": existing}
+                            break
+            except requests.RequestException:
+                pass
+
+        # -- step 1: scrape the edit submission page -----------------------
+        self._rate_limit("activity")
+        try:
+            edit_url = assign_url if "action=editsubmission" in assign_url else assign_url + "&action=editsubmission"
+            resp = self.session.get(edit_url)
+            soup = BeautifulSoup(resp.text, "html.parser")
+        except requests.RequestException as e:
+            return {"status": "error", "error": f"Failed to load edit page: {e}"}
+
+        # sesskey
+        sesskey_input = soup.find("input", {"name": "sesskey"})
+        sesskey = sesskey_input["value"] if sesskey_input else self.sesskey
+        if not sesskey:
+            return {"status": "error", "error": "Could not find sesskey"}
+
+        # draft itemid (files_filemanager hidden input)
+        itemid_input = soup.find("input", {"name": "files_filemanager"})
+        if not itemid_input:
+            return {"status": "error", "error": "Could not find draft itemid (files_filemanager)"}
+        itemid = itemid_input["value"]
+
+        # userid
+        userid_input = soup.find("input", {"name": "userid"})
+        userid = userid_input["value"] if userid_input else self.user_id
+        if not userid:
+            return {"status": "error", "error": "Could not find userid"}
+
+        # assign id from URL
+        assign_id_match = re.search(r"id=(\d+)", assign_url)
+        if not assign_id_match:
+            return {"status": "error", "error": "Could not parse assignment id from URL"}
+        assign_id = assign_id_match.group(1)
+
+        # ctx_id from the file manager JS config embedded in the page
+        ctx_id_match = re.search(r'"context"\s*:\s*\{[^}]*"id"\s*:\s*(\d+)', resp.text)
+        if not ctx_id_match:
+            ctx_id_match = re.search(r'contextid["\s:]+(\d+)', resp.text)
+        ctx_id = ctx_id_match.group(1) if ctx_id_match else "0"
+
+        # author name
+        author_match = re.search(r'"author"\s*:\s*"([^"]+)"', resp.text)
+        author = author_match.group(1) if author_match else ""
+
+        # -- step 2: upload file to draft area -----------------------------
+        self._rate_limit("activity")
+        filename = os.path.basename(file_path)
+        mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        try:
+            with open(file_path, "rb") as fh:
+                upload_resp = self.session.post(
+                    f"{RAIT_URL}/repository/repository_ajax.php",
+                    files={"repo_upload_file": (filename, fh, mime_type)},
+                    data={
+                        "action": "upload",
+                        "sesskey": sesskey,
+                        "repo_id": "4",
+                        "itemid": itemid,
+                        "author": author,
+                        "savepath": "/",
+                        "title": filename,
+                        "ctx_id": ctx_id,
+                    },
+                )
+        except requests.RequestException as e:
+            return {"status": "error", "error": f"File upload failed: {e}"}
+
+        if upload_resp.status_code != 200:
+            return {"status": "error", "error": f"Upload returned HTTP {upload_resp.status_code}"}
+
+        upload_json = {}
+        try:
+            upload_json = upload_resp.json()
+        except Exception:
+            pass
+        if upload_json.get("error"):
+            return {"status": "error", "error": f"Upload error: {upload_json['error']}"}
+
+        # -- step 3: save submission ---------------------------------------
+        self._rate_limit("activity")
+        try:
+            save_resp = self.session.post(
+                f"{RAIT_URL}/mod/assign/view.php",
+                data={
+                    "id": assign_id,
+                    "userid": userid,
+                    "action": "savesubmission",
+                    "sesskey": sesskey,
+                    "_qf__mod_assign_submission_form": "1",
+                    "files_filemanager": itemid,
+                    "submitbutton": "Save changes",
+                },
+                allow_redirects=True,
+            )
+        except requests.RequestException as e:
+            return {"status": "error", "error": f"Save submission failed: {e}"}
+
+        # verify: re-fetch the view page to confirm submission landed
+        self._rate_limit("activity")
+        status_text = "unknown"
+        try:
+            verify_resp = self.session.get(f"{RAIT_URL}/mod/assign/view.php?id={assign_id}&action=view")
+            verify_soup = BeautifulSoup(verify_resp.text, "html.parser")
+            table = verify_soup.find("table", class_="generaltable") or verify_soup.find("table", class_="submissionstatustable")
+            if table:
+                for row in table.find_all("tr"):
+                    cells = row.find_all(["td", "th"])
+                    if len(cells) >= 2 and "submission status" in cells[0].get_text(strip=True).lower():
+                        status_text = cells[1].get_text(strip=True)
+                        break
+        except requests.RequestException:
+            pass
+
+        return {
+            "status": "submitted",
+            "assign_id": assign_id,
+            "filename": filename,
+            "itemid": itemid,
+            "submission_status": status_text,
+        }
+
     # -- grades ------------------------------------------------------------
 
     def get_grades(self, course_id: str) -> dict | str:
