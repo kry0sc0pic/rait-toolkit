@@ -1,6 +1,6 @@
 # RAIT Toolkit
 
-MCP server + Claude plugin for D.Y. Patil RAIT students. Connects Claude Desktop and Claude Code to your MyDy LMS and UniClaIRE portal — courses, attendance, GPA, hit-rate maxxer, experiment cover PDFs, evaluation sheets, and lab writeup generation.
+MCP server + Claude plugin for D.Y. Patil RAIT students. Connects Claude Desktop, Claude Code, Hermes Agent, and other MCP clients to your MyDy LMS and UniClaIRE portal — courses, attendance, GPA, hit-rate maxxer, experiment cover PDFs, evaluation sheets, and lab writeup generation.
 
 ---
 
@@ -87,6 +87,37 @@ Run from inside the cloned repo. Then set credentials in Claude Code settings:
 ```
 
 Or let Claude prompt you on first use.
+
+---
+
+### Hermes Agent
+
+Hermes has a native MCP client, so you can register the local stdio server directly:
+
+```sh
+hermes mcp add lms-buddy --command uvx --args --from /path/to/rait-toolkit lms-buddy
+hermes mcp test lms-buddy
+```
+
+If you want Hermes to pass credentials at startup instead of entering them later, add them inline when registering the server:
+
+```sh
+hermes mcp add lms-buddy \
+  --command uvx \
+  --env \
+  MYDY_EMAIL=your@dypatil.edu \
+  MYDY_PASSWORD=yourpassword \
+  PORTAL_REGNO=your_mobile_number \
+  PORTAL_PASSWORD=your_uniclaire_password \
+  --args --from /path/to/rait-toolkit lms-buddy
+```
+
+Notes:
+- Replace `/path/to/rait-toolkit` with your local clone path.
+- Hermes will show the discovered tools and ask which ones to enable.
+- Start a new Hermes session (or run `/reset`) after `hermes mcp add` so the tools are loaded into the prompt.
+- If you omit credentials, use the `set_mydy_credentials` and `set_portal_credentials` tools once; they save to `~/.lms-buddy/credentials.json` for future sessions.
+- `PORTAL_REGNO` is your **mobile/registration number** for the UniClaIRE portal — not your roll number.
 
 ---
 
