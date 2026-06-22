@@ -1,0 +1,65 @@
+\documentclass[12pt]{article}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{array}
+\usepackage{tabularx}
+\renewcommand{\arraystretch}{1.6}
+
+% --- Fill-in values (placeholders) ---
+\newcommand{\expnum}{__EXPNUM__}
+\newcommand{\exptitle}{__EXPTITLE__}
+\newcommand{\studentname}{__STUDENTNAME__}
+\newcommand{\rollno}{__ROLLNO__}
+\newcommand{\divbatch}{__DIVBATCH__}
+\newcommand{\coursecos}{__COS__}
+\newcommand{\pomap}{__POMAP__}
+\newcommand{\psomap}{__PSOMAP__}
+\newcommand{\dateperf}{__DATEPERF__}
+\newcommand{\dateeval}{__DATEEVAL__}
+
+\begin{document}
+\thispagestyle{empty}
+
+\begin{center}
+    {\large\underline{Practical Evaluation Sheet}}
+\end{center}
+
+\vspace{1.5em}
+
+\noindent Experiment No: \expnum\par
+\vspace{0.4em}
+\noindent Title \hspace{2em}: \exptitle\par
+
+\vspace{1em}
+
+\noindent
+\begin{tabular}{|p{0.45\textwidth}|p{0.45\textwidth}|}
+\hline
+Student Name & \studentname \\ \hline
+Roll No & \rollno \\ \hline
+Div. /Batch & \divbatch \\ \hline
+\end{tabular}
+
+\vspace{1.5em}
+
+\noindent
+\begin{tabular}{|p{0.45\textwidth}|p{0.45\textwidth}|}
+\hline
+CO's & \coursecos \\ \hline
+PO's Mapping & \pomap \\ \hline
+PSO Mapping & \psomap \\ \hline
+\end{tabular}
+
+\vspace{1.5em}
+
+\noindent
+\begin{tabular}{|p{0.45\textwidth}|p{0.45\textwidth}|}
+\hline
+Date of Performance & \dateperf \\ \hline
+Date of Evaluation & \dateeval \\ \hline
+\end{tabular}
+
+\vspace{1.5em}
+
+\hfill Faculty signature with date
+
+\end{document}

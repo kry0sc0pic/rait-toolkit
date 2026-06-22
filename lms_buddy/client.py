@@ -3,6 +3,9 @@ MyDy LMS HTTP Client
 
 Synchronous HTTP client for the MyDy (Moodle-based) LMS.
 No UI dependency — used by both the TUI app and MCP server.
+
+NOTE: This file mirrors the root client.py and is included in the lms_buddy
+wheel. Keep both files in sync when updating LMS scraping logic.
 """
 
 import os
