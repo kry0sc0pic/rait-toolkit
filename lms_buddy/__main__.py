@@ -33,8 +33,10 @@ from mcp.server.fastmcp import FastMCP
 from .client import MydyClient
 from .gpa import fetch_gpa
 from .render import (
+    batch_render_conference_letters,
     batch_render_covers,
     batch_render_eval_sheets,
+    render_conference_letter,
     render_cover,
     render_eval_sheet,
 )
@@ -181,7 +183,8 @@ mcp = FastMCP(
         "IMPORTANT: Always call get_assignments before submit_assignment — this is enforced. "
         "GPA tool (UniClaIRE portal): get_gpa. "
         "PDF tools: render_cover_pdf, batch_render_covers_pdf, render_eval_sheet_pdf, "
-        "batch_render_eval_sheets_pdf — each automatically opens the PDF after saving. "
+        "batch_render_eval_sheets_pdf, render_conference_letter_pdf, batch_render_conference_letters_pdf "
+        "— each automatically opens the PDF after saving. "
         "Utility: set_mydy_credentials, set_portal_credentials, get_cached_info, open_pdf, self_update. "
         "IMPORTANT: Call get_cached_info at the start of any session to load the user's known "
         "identifiers (email, USN, roll number). Note: the UniClaIRE login uses a mobile/regno, "
@@ -540,6 +543,94 @@ def batch_render_eval_sheets_pdf(
     Returns the saved PDF path and page count.
     """
     result = batch_render_eval_sheets(documents=documents, detailed=detailed, out=out)
+    if not result.get("success"):
+        raise ValueError(result.get("error", "Batch render failed"))
+    open_pdf(result["path"])
+    return f"Saved to: {result['path']} ({result.get('page_count', len(documents))} pages)"
+
+
+@mcp.tool()
+def render_conference_letter_pdf(
+    paper_title: str,
+    coauthors: str,
+    conference_name: str,
+    publisher: str,
+    conference_date: str,
+    venue: str,
+    sender_name: str,
+    sender_dept: str = "",
+    applicant_name: str = "Mr. Krishaay Jois",
+    student_year: str = "BE",
+    branch: str = "MBA Tech",
+    department: str = "Department of Computer Science and Engineering",
+    institute: str = "RAIT, Nerul",
+    addressee: str = "The Principal",
+    subject: str = "Application for the submission of conference paper",
+    letter_date: str = "",
+    forwarded_by_one: str = "Prof. Gajanan K. Birajdar",
+    forwarded_by_one_role: str = "R&D In-charge, Dept. of Computer Science and Engg.",
+    forwarded_by_two: str = "Prof. Sangita Chaudhari",
+    forwarded_by_two_role: str = "Head of Department, Computer Science and Engg.",
+    recommended_by: str = "Prof. Vishwesh Vyawahare",
+    recommended_by_role: str = "Dean (R&D), RAIT",
+    approved_by: str = "Prof. Mukesh D. Patil",
+    approved_by_role: str = "Principal, RAIT",
+    out: str = "conference_letter.pdf",
+) -> str:
+    """Render a single conference paper submission cover letter to PDF.
+
+    paper_title/coauthors/conference_name/publisher/conference_date/venue describe the paper.
+    sender_name/sender_dept describe the sign-off sender. applicant fields default to
+    Mr. Krishaay Jois / BE / MBA Tech / Department of Computer Science and Engineering.
+    letter_date defaults to the current date when omitted. Approval block fields default
+    to the current configured RAIT values above. Returns the saved PDF path or raises on failure.
+    """
+    result = render_conference_letter(
+        paper_title=paper_title,
+        coauthors=coauthors,
+        conference_name=conference_name,
+        publisher=publisher,
+        conference_date=conference_date,
+        venue=venue,
+        sender_name=sender_name,
+        sender_dept=sender_dept,
+        applicant_name=applicant_name,
+        student_year=student_year,
+        branch=branch,
+        department=department,
+        institute=institute,
+        addressee=addressee,
+        subject=subject,
+        letter_date=letter_date,
+        forwarded_by_one=forwarded_by_one,
+        forwarded_by_one_role=forwarded_by_one_role,
+        forwarded_by_two=forwarded_by_two,
+        forwarded_by_two_role=forwarded_by_two_role,
+        recommended_by=recommended_by,
+        recommended_by_role=recommended_by_role,
+        approved_by=approved_by,
+        approved_by_role=approved_by_role,
+        out=out,
+    )
+    if not result.get("success"):
+        raise ValueError(result.get("error", "Render failed"))
+    open_pdf(result["path"])
+    return result["path"]
+
+
+@mcp.tool()
+def batch_render_conference_letters_pdf(
+    documents: list[dict],
+    out: str = "conference_letters_batch.pdf",
+) -> str:
+    """Render multiple conference paper submission cover letters into a single multi-page PDF.
+
+    Each document should include paper_title, coauthors, conference_name, publisher,
+    conference_date, venue, and sender_name. Optional fields include sender_dept,
+    applicant_name, student_year, branch, department, institute, addressee, subject,
+    letter_date, and approval block overrides.
+    """
+    result = batch_render_conference_letters(documents=documents, out=out)
     if not result.get("success"):
         raise ValueError(result.get("error", "Batch render failed"))
     open_pdf(result["path"])

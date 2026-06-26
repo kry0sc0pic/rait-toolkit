@@ -1,0 +1,118 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=0.8in]{geometry}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{lmodern}
+\usepackage{xcolor}
+
+\hypersetup{colorlinks=true, urlcolor=blue!60!black, linkcolor=black}
+\pagestyle{empty}
+
+% --- Fill-in values (placeholders) ---
+\newcommand{\LetterDate}{__LETTERDATE__}
+\newcommand{\Institute}{__INSTITUTE__}
+\newcommand{\Addressee}{__ADDRESSEE__}
+\newcommand{\SubjectLine}{__SUBJECT__}
+
+\newcommand{\ApplicantName}{__APPLICANTNAME__}
+\newcommand{\StudentYear}{__STUDENTYEAR__}
+\newcommand{\Branch}{__BRANCH__}
+\newcommand{\Department}{__DEPARTMENT__}
+
+\newcommand{\PaperTitle}{__PAPERTITLE__}
+\newcommand{\CoAuthors}{__COAUTHORS__}
+\newcommand{\ConferenceName}{__CONFERENCENAME__}
+\newcommand{\Publisher}{__PUBLISHER__}
+\newcommand{\ConferenceDate}{__CONFERENCEDATE__}
+\newcommand{\Venue}{__VENUE__}
+
+\newcommand{\SenderName}{__SENDERNAME__}
+\newcommand{\SenderDept}{__SENDERDEPT__}
+
+\newcommand{\ForwardedByOne}{__FORWARDEDBYONE__}
+\newcommand{\ForwardedByOneRole}{__FORWARDEDBYONEROLE__}
+\newcommand{\ForwardedByTwo}{__FORWARDEDBYTWO__}
+\newcommand{\ForwardedByTwoRole}{__FORWARDEDBYTWOROLE__}
+\newcommand{\RecommendedBy}{__RECOMMENDEDBY__}
+\newcommand{\RecommendedByRole}{__RECOMMENDEDBYROLE__}
+\newcommand{\ApprovedBy}{__APPROVEDBY__}
+\newcommand{\ApprovedByRole}{__APPROVEDBYROLE__}
+
+\setlength{\extrarowheight}{4pt}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+\begin{document}
+\thispagestyle{empty}
+
+\hfill Date: \LetterDate
+
+\vspace{1em}
+
+\noindent To,\\
+\Addressee,\\
+\Institute.
+
+\vspace{0.7em}
+
+\noindent\textbf{Sub:} \SubjectLine.
+
+\vspace{0.7em}
+
+\noindent Respected Sir,
+
+\vspace{0.4em}
+
+\noindent I, \ApplicantName, \StudentYear{} student (\Branch), \Department,
+would like to submit a conference paper with the following details:
+
+\vspace{0.6em}
+
+\noindent\renewcommand{\arraystretch}{1.2}%
+\begin{tabularx}{\textwidth}{|L{0.32\textwidth}|X|}
+\hline
+\textbf{Title of Paper} & \PaperTitle \\ \hline
+\textbf{Co-author(s)} & \CoAuthors \\ \hline
+\textbf{Name of conference} & \ConferenceName \\ \hline
+\textbf{Conference proceeding publisher} & \Publisher \\ \hline
+\textbf{Date} & \ConferenceDate \\ \hline
+\textbf{Venue} & \Venue \\ \hline
+\end{tabularx}
+
+\vspace{0.8em}
+
+\noindent Please find attached a copy of the paper, plagiarism report and the
+conference brochure. I am thankful to you and the management for providing an
+atmosphere conducive for research. I also wish to express my sincere thanks to
+the Head of the Department, Computer Science and Engineering, and Dean (R\&D),
+RAIT for the constant support.
+
+\vspace{0.4em}
+
+\noindent I request you to grant me the permission to submit the conference paper.
+
+\vspace{0.7em}
+
+\noindent Thanking you.
+
+\vspace{1em}
+
+\noindent Sincerely,
+
+\vspace{1em}
+
+\noindent \SenderName\\
+\SenderDept
+
+\vspace{1.2em}
+
+\noindent\renewcommand{\arraystretch}{1.4}%
+\begin{tabularx}{\textwidth}{X X}
+\textbf{Forwarded by:}\newline \textbf{\ForwardedByOne}\newline \ForwardedByOneRole &
+\textbf{Forwarded by:}\newline \textbf{\ForwardedByTwo}\newline \ForwardedByTwoRole \\[1em]
+\textbf{Recommended by:}\newline \textbf{\RecommendedBy}\newline \RecommendedByRole &
+\textbf{Approved by:}\newline \textbf{\ApprovedBy}\newline \ApprovedByRole \\
+\end{tabularx}
+
+\end{document}

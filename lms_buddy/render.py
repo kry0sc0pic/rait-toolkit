@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 TEMPLATE_PATH         = _TEMPLATES_DIR / "template.tex"
 GENERAL_TEMPLATE_PATH = _TEMPLATES_DIR / "template_general.tex"
 EVAL_TEMPLATE_PATH    = _TEMPLATES_DIR / "eval_template.tex"
+CONFERENCE_LETTER_TEMPLATE_PATH = _TEMPLATES_DIR / "conference_letter_template.tex"
 
 COVER_PLACEHOLDERS = {
     "__EXPNUM__":      "expnum",
@@ -38,6 +40,52 @@ EVAL_PLACEHOLDERS = {
     "__PSOMAP__":      "psomap",
     "__DATEPERF__":    "dateperf",
     "__DATEEVAL__":    "dateeval",
+}
+
+CONFERENCE_LETTER_PLACEHOLDERS = {
+    "__LETTERDATE__": "letter_date",
+    "__INSTITUTE__": "institute",
+    "__ADDRESSEE__": "addressee",
+    "__SUBJECT__": "subject",
+    "__APPLICANTNAME__": "applicant_name",
+    "__STUDENTYEAR__": "student_year",
+    "__BRANCH__": "branch",
+    "__DEPARTMENT__": "department",
+    "__PAPERTITLE__": "paper_title",
+    "__COAUTHORS__": "coauthors",
+    "__CONFERENCENAME__": "conference_name",
+    "__PUBLISHER__": "publisher",
+    "__CONFERENCEDATE__": "conference_date",
+    "__VENUE__": "venue",
+    "__SENDERNAME__": "sender_name",
+    "__SENDERDEPT__": "sender_dept",
+    "__FORWARDEDBYONE__": "forwarded_by_one",
+    "__FORWARDEDBYONEROLE__": "forwarded_by_one_role",
+    "__FORWARDEDBYTWO__": "forwarded_by_two",
+    "__FORWARDEDBYTWOROLE__": "forwarded_by_two_role",
+    "__RECOMMENDEDBY__": "recommended_by",
+    "__RECOMMENDEDBYROLE__": "recommended_by_role",
+    "__APPROVEDBY__": "approved_by",
+    "__APPROVEDBYROLE__": "approved_by_role",
+}
+
+CONFERENCE_LETTER_DEFAULTS = {
+    "institute": "RAIT, Nerul",
+    "addressee": "The Principal",
+    "subject": "Application for the submission of conference paper",
+    "applicant_name": "Mr. Krishaay Jois",
+    "student_year": "BE",
+    "branch": "MBA Tech",
+    "department": "Department of Computer Science and Engineering",
+    "sender_dept": "Department of Computer Science and Engineering, RAIT",
+    "forwarded_by_one": "Prof. Gajanan K. Birajdar",
+    "forwarded_by_one_role": "R&D In-charge, Dept. of Computer Science and Engg.",
+    "forwarded_by_two": "Prof. Sangita Chaudhari",
+    "forwarded_by_two_role": "Head of Department, Computer Science and Engg.",
+    "recommended_by": "Prof. Vishwesh Vyawahare",
+    "recommended_by_role": "Dean (R&D), RAIT",
+    "approved_by": "Prof. Mukesh D. Patil",
+    "approved_by_role": "Principal, RAIT",
 }
 
 _LATEX_SPECIAL = {
@@ -63,6 +111,10 @@ def _fill(template: str, values: dict, placeholders: dict) -> str:
     for token, key in placeholders.items():
         result = result.replace(token, latex_escape(values.get(key, "")))
     return result
+
+
+def _today_str() -> str:
+    return datetime.now().strftime("%d/%m/%Y")
 
 
 def _find_engine() -> str:
@@ -216,6 +268,116 @@ def batch_render_eval_sheets(
                EVAL_PLACEHOLDERS)
         for d in documents
     ]
+    result = _compile(_multi_page(pages), out)
+    if result.get("success"):
+        result["page_count"] = len(documents)
+    return result
+
+
+def render_conference_letter(
+    paper_title: str,
+    coauthors: str,
+    conference_name: str,
+    publisher: str,
+    conference_date: str,
+    venue: str,
+    sender_name: str,
+    sender_dept: str = "",
+    applicant_name: str = "",
+    student_year: str = "",
+    branch: str = "",
+    department: str = "",
+    institute: str = "",
+    addressee: str = "",
+    subject: str = "",
+    letter_date: str = "",
+    forwarded_by_one: str = "",
+    forwarded_by_one_role: str = "",
+    forwarded_by_two: str = "",
+    forwarded_by_two_role: str = "",
+    recommended_by: str = "",
+    recommended_by_role: str = "",
+    approved_by: str = "",
+    approved_by_role: str = "",
+    out: str = "conference_letter.pdf",
+) -> dict:
+    if not CONFERENCE_LETTER_TEMPLATE_PATH.exists():
+        return {"success": False, "error": f"Template not found: {CONFERENCE_LETTER_TEMPLATE_PATH}"}
+
+    values = {
+        **CONFERENCE_LETTER_DEFAULTS,
+        "paper_title": paper_title,
+        "coauthors": coauthors,
+        "conference_name": conference_name,
+        "publisher": publisher,
+        "conference_date": conference_date,
+        "venue": venue,
+        "sender_name": sender_name,
+        "sender_dept": sender_dept or CONFERENCE_LETTER_DEFAULTS["sender_dept"],
+        "applicant_name": applicant_name or CONFERENCE_LETTER_DEFAULTS["applicant_name"],
+        "student_year": student_year or CONFERENCE_LETTER_DEFAULTS["student_year"],
+        "branch": branch or CONFERENCE_LETTER_DEFAULTS["branch"],
+        "department": department or CONFERENCE_LETTER_DEFAULTS["department"],
+        "institute": institute or CONFERENCE_LETTER_DEFAULTS["institute"],
+        "addressee": addressee or CONFERENCE_LETTER_DEFAULTS["addressee"],
+        "subject": subject or CONFERENCE_LETTER_DEFAULTS["subject"],
+        "letter_date": letter_date or _today_str(),
+        "forwarded_by_one": forwarded_by_one or CONFERENCE_LETTER_DEFAULTS["forwarded_by_one"],
+        "forwarded_by_one_role": forwarded_by_one_role or CONFERENCE_LETTER_DEFAULTS["forwarded_by_one_role"],
+        "forwarded_by_two": forwarded_by_two or CONFERENCE_LETTER_DEFAULTS["forwarded_by_two"],
+        "forwarded_by_two_role": forwarded_by_two_role or CONFERENCE_LETTER_DEFAULTS["forwarded_by_two_role"],
+        "recommended_by": recommended_by or CONFERENCE_LETTER_DEFAULTS["recommended_by"],
+        "recommended_by_role": recommended_by_role or CONFERENCE_LETTER_DEFAULTS["recommended_by_role"],
+        "approved_by": approved_by or CONFERENCE_LETTER_DEFAULTS["approved_by"],
+        "approved_by_role": approved_by_role or CONFERENCE_LETTER_DEFAULTS["approved_by_role"],
+    }
+    tex = _fill(
+        CONFERENCE_LETTER_TEMPLATE_PATH.read_text(encoding="utf-8"),
+        values,
+        CONFERENCE_LETTER_PLACEHOLDERS,
+    )
+    return _compile(tex, out)
+
+
+def batch_render_conference_letters(
+    documents: list[dict],
+    out: str = "conference_letters_batch.pdf",
+) -> dict:
+    if not CONFERENCE_LETTER_TEMPLATE_PATH.exists():
+        return {"success": False, "error": f"Template not found: {CONFERENCE_LETTER_TEMPLATE_PATH}"}
+
+    raw = CONFERENCE_LETTER_TEMPLATE_PATH.read_text(encoding="utf-8")
+    pages = []
+    for d in documents:
+        values = {
+            **CONFERENCE_LETTER_DEFAULTS,
+            "paper_title": d.get("paper_title", ""),
+            "coauthors": d.get("coauthors", ""),
+            "conference_name": d.get("conference_name", ""),
+            "publisher": d.get("publisher", ""),
+            "conference_date": d.get("conference_date", ""),
+            "venue": d.get("venue", ""),
+            "sender_name": d.get("sender_name", ""),
+            "sender_dept": d.get("sender_dept") or CONFERENCE_LETTER_DEFAULTS["sender_dept"],
+            "applicant_name": d.get("applicant_name") or CONFERENCE_LETTER_DEFAULTS["applicant_name"],
+            "student_year": d.get("student_year") or CONFERENCE_LETTER_DEFAULTS["student_year"],
+            "branch": d.get("branch") or CONFERENCE_LETTER_DEFAULTS["branch"],
+            "department": d.get("department") or CONFERENCE_LETTER_DEFAULTS["department"],
+            "institute": d.get("institute") or CONFERENCE_LETTER_DEFAULTS["institute"],
+            "addressee": d.get("addressee") or CONFERENCE_LETTER_DEFAULTS["addressee"],
+            "subject": d.get("subject") or CONFERENCE_LETTER_DEFAULTS["subject"],
+            "letter_date": d.get("letter_date") or _today_str(),
+            "forwarded_by_one": d.get("forwarded_by_one") or CONFERENCE_LETTER_DEFAULTS["forwarded_by_one"],
+            "forwarded_by_one_role": d.get("forwarded_by_one_role") or CONFERENCE_LETTER_DEFAULTS["forwarded_by_one_role"],
+            "forwarded_by_two": d.get("forwarded_by_two") or CONFERENCE_LETTER_DEFAULTS["forwarded_by_two"],
+            "forwarded_by_two_role": d.get("forwarded_by_two_role") or CONFERENCE_LETTER_DEFAULTS["forwarded_by_two_role"],
+            "recommended_by": d.get("recommended_by") or CONFERENCE_LETTER_DEFAULTS["recommended_by"],
+            "recommended_by_role": d.get("recommended_by_role") or CONFERENCE_LETTER_DEFAULTS["recommended_by_role"],
+            "approved_by": d.get("approved_by") or CONFERENCE_LETTER_DEFAULTS["approved_by"],
+            "approved_by_role": d.get("approved_by_role") or CONFERENCE_LETTER_DEFAULTS["approved_by_role"],
+        }
+        pages.append(_fill(raw, values, CONFERENCE_LETTER_PLACEHOLDERS))
+
     result = _compile(_multi_page(pages), out)
     if result.get("success"):
         result["page_count"] = len(documents)
