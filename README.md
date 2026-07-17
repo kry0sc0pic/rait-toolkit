@@ -245,7 +245,7 @@ rait-toolkit/
 │   ├── gpa.py               #   UniClaIRE portal GPA fetcher
 │   ├── render.py            #   LaTeX PDF rendering
 │   ├── tools.py             #   Cached business logic (list_subjects, hitrates, etc.)
-│   └── templates/           #   LaTeX templates (cover, general cover, eval sheet)
+│   └── templates/           #   LaTeX templates (cover, eval sheet, conference letter)
 ├── plugin/                  # Claude Code plugin
 │   ├── .claude-plugin/
 │   │   └── plugin.json      #   MCP server declaration + metadata

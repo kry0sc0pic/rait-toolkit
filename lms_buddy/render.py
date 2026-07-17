@@ -16,8 +16,7 @@ from typing import Any
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
-TEMPLATE_PATH         = _TEMPLATES_DIR / "template.tex"
-GENERAL_TEMPLATE_PATH = _TEMPLATES_DIR / "template_general.tex"
+COVER_TEMPLATE_PATH   = _TEMPLATES_DIR / "template_general.tex"
 EVAL_TEMPLATE_PATH    = _TEMPLATES_DIR / "eval_template.tex"
 CONFERENCE_LETTER_TEMPLATE_PATH = _TEMPLATES_DIR / "conference_letter_template.tex"
 
@@ -203,12 +202,11 @@ def _multi_page(documents: list[str]) -> str:
 
 def render_cover(
     expnum: str, expname: str, name: str, division: str, roll: str,
-    serial: str = "", general: bool = True, out: str = "cover.pdf",
+    serial: str = "", out: str = "cover.pdf",
 ) -> dict:
-    tmpl = GENERAL_TEMPLATE_PATH if general else TEMPLATE_PATH
-    if not tmpl.exists():
-        return {"success": False, "error": f"Template not found: {tmpl}"}
-    tex = _fill(tmpl.read_text(encoding="utf-8"),
+    if not COVER_TEMPLATE_PATH.exists():
+        return {"success": False, "error": f"Template not found: {COVER_TEMPLATE_PATH}"}
+    tex = _fill(COVER_TEMPLATE_PATH.read_text(encoding="utf-8"),
                 {"expnum": expnum, "expname": expname, "name": name,
                  "division": division, "roll": roll, "serial": serial},
                 COVER_PLACEHOLDERS)
@@ -216,12 +214,11 @@ def render_cover(
 
 
 def batch_render_covers(
-    documents: list[dict], general: bool = True, out: str = "covers_batch.pdf",
+    documents: list[dict], out: str = "covers_batch.pdf",
 ) -> dict:
-    tmpl = GENERAL_TEMPLATE_PATH if general else TEMPLATE_PATH
-    if not tmpl.exists():
-        return {"success": False, "error": f"Template not found: {tmpl}"}
-    raw = tmpl.read_text(encoding="utf-8")
+    if not COVER_TEMPLATE_PATH.exists():
+        return {"success": False, "error": f"Template not found: {COVER_TEMPLATE_PATH}"}
+    raw = COVER_TEMPLATE_PATH.read_text(encoding="utf-8")
     pages = [
         _fill(raw, {"expnum": d.get("expnum",""), "expname": d.get("expname",""),
                     "name": d.get("name",""), "division": d.get("division",""),
@@ -235,6 +232,10 @@ def batch_render_covers(
     return result
 
 
+def _co_count(cos: str) -> int:
+    return len([t for t in re.split(r"[,\s]+", cos.strip()) if t])
+
+
 def render_eval_sheet(
     expnum: str, title: str, name: str, roll: str,
     serial: str = "", batch: str = "", cos: str = "", pomap: str = "",
@@ -243,6 +244,8 @@ def render_eval_sheet(
 ) -> dict:
     if not EVAL_TEMPLATE_PATH.exists():
         return {"success": False, "error": f"Template not found: {EVAL_TEMPLATE_PATH}"}
+    if _co_count(cos) > 1:
+        return {"success": False, "error": "Only a single CO is supported (got multiple)."}
     tex = _fill(EVAL_TEMPLATE_PATH.read_text(encoding="utf-8"),
                 {"expnum": expnum, "title": title, "name": name, "roll": roll,
                  "serial": serial, "batch": batch, "cos": cos, "pomap": pomap,
@@ -257,6 +260,9 @@ def batch_render_eval_sheets(
 ) -> dict:
     if not EVAL_TEMPLATE_PATH.exists():
         return {"success": False, "error": f"Template not found: {EVAL_TEMPLATE_PATH}"}
+    for i, d in enumerate(documents):
+        if _co_count(d.get("cos", "")) > 1:
+            return {"success": False, "error": f"Only a single CO is supported (document {i} has multiple)."}
     raw = EVAL_TEMPLATE_PATH.read_text(encoding="utf-8")
     pages = [
         _fill(raw, {"expnum": d.get("expnum",""), "title": d.get("title",""),

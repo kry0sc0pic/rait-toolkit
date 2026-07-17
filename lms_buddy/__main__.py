@@ -494,19 +494,18 @@ def render_cover_pdf(
     division: str,
     roll: str,
     serial: str = "",
-    general: bool = True,
     out: str = "cover.pdf",
 ) -> str:
     """Render a single experiment cover page to PDF.
 
     expnum: experiment number. expname: experiment title. name: student full name.
     division: division or course. roll: roll number. serial: serial number (optional).
-    general: use general template (True) or detailed (False). out: output PDF path.
+    out: output PDF path.
     Returns the saved PDF path or raises on failure.
     """
     result = render_cover(expnum=expnum, expname=expname, name=name,
                           division=division, roll=roll, serial=serial,
-                          general=general, out=out)
+                          out=out)
     if not result.get("success"):
         raise ValueError(result.get("error", "Render failed"))
     open_pdf(result["path"])
@@ -516,16 +515,15 @@ def render_cover_pdf(
 @mcp.tool()
 def batch_render_covers_pdf(
     documents: list[dict],
-    general: bool = True,
     out: str = "covers_batch.pdf",
 ) -> str:
     """Render multiple experiment covers into a single multi-page PDF.
 
     documents: list of objects each with expnum, expname, name, division, roll
-               (and optional serial). general: use general template. out: output path.
+               (and optional serial). out: output path.
     Returns the saved PDF path and page count.
     """
-    result = batch_render_covers(documents=documents, general=general, out=out)
+    result = batch_render_covers(documents=documents, out=out)
     if not result.get("success"):
         raise ValueError(result.get("error", "Batch render failed"))
     open_pdf(result["path"])
@@ -552,6 +550,7 @@ def render_eval_sheet_pdf(
 
     expnum: experiment number. title: experiment title. name: student full name.
     roll: roll number. serial/batch/cos/pomap/psomap/dateperf/dateeval: all optional.
+    cos: a single CO only (e.g. "CO1") — multiple COs are rejected.
     detailed: use detailed template with CO mapping. out: output PDF path.
     Returns the saved PDF path or raises on failure.
     """
@@ -575,6 +574,7 @@ def batch_render_eval_sheets_pdf(
 
     documents: list of objects each with expnum, title, name, roll (required)
                and optional serial, batch, cos, pomap, psomap, dateperf, dateeval.
+               cos: a single CO only per document (e.g. "CO1") — multiple COs are rejected.
     detailed: use detailed template. out: output PDF path.
     Returns the saved PDF path and page count.
     """
