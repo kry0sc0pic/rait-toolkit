@@ -311,9 +311,9 @@ def max_hitrate(course_id: str, course_name: str = "") -> str:
         history, not the "viewed" tracker — posting is a visible, real action
         on a shared course forum, even though the content is inert).
       - For any quiz without a 100% attempt, takes a throwaway probe attempt
-        to read Moodle's disclosed correct-answer key, then a second attempt
-        answering for real. Skipped if the quiz doesn't allow enough attempts
-        or uses multi-page attempts (not yet supported).
+        (single- or multi-page) to read Moodle's disclosed correct-answer key,
+        then a second attempt answering for real. Skipped if the quiz doesn't
+        allow enough attempts to safely fit both.
     If any pending activities are unsubmitted assignments, the tool flags them
     and instructs the agent to ask the user whether to upload a blank placeholder PDF.
     The blank PDF is stored at ~/.lms-buddy/blank_submission.pdf.

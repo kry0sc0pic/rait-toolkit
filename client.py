@@ -1771,100 +1771,111 @@ class MydyClient:
         return {"attempt_id": str(attempt_id), "questions": questions}
 
     def submit_quiz_attempt(self, attempt_id: str | int, answers: dict[int, str]) -> dict:
-        """Answer and finish a quiz attempt.
+        """Answer and finish a quiz attempt, walking every page if multi-page.
 
         answers: {slot_number: option_text} — matched against each question's
         option labels (exact match preferred, falls back to substring match).
         Slots not present in `answers` keep whatever was already selected on
-        the page (if anything). Only single-page attempts are supported.
+        the page (if anything).
         """
         if not self.logged_in:
             return {"status": "error", "error": "Not logged in."}
-        self._rate_limit("activity")
-        try:
-            resp = self.session.get(f"{RAIT_URL}/mod/quiz/attempt.php?attempt={attempt_id}")
-        except requests.RequestException as e:
-            return {"status": "error", "error": f"Failed to load attempt: {e}"}
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        form = soup.find("form", id="responseform")
-        if not form:
-            return {"status": "error", "error": "Could not find attempt form (attempt may already be finished)."}
+        sesskey = None
+        page_num = 0
+        while True:
+            self._rate_limit("activity")
+            page_url = f"{RAIT_URL}/mod/quiz/attempt.php?attempt={attempt_id}"
+            if page_num:
+                page_url += f"&page={page_num}"
+            try:
+                resp = self.session.get(page_url)
+            except requests.RequestException as e:
+                return {"status": "error", "error": f"Failed to load attempt page {page_num}: {e}"}
 
-        # collect every non-radio/checkbox field verbatim (hidden state, sequencechecks, etc.)
-        fields: list[tuple[str, str]] = []
-        for inp in form.find_all("input"):
-            name = inp.get("name")
-            if not name:
-                continue
-            itype = (inp.get("type") or "text").lower()
-            if itype in ("radio", "checkbox", "submit"):
-                continue
-            fields.append((name, inp.get("value", "")))
-        for ta in form.find_all("textarea"):
-            name = ta.get("name")
-            if name:
-                fields.append((name, ta.text or ""))
-        for sel in form.find_all("select"):
-            name = sel.get("name")
-            if not name:
-                continue
-            opt = sel.find("option", selected=True) or sel.find("option")
-            fields.append((name, opt.get("value", "") if opt else ""))
+            soup = BeautifulSoup(resp.text, "html.parser")
+            form = soup.find("form", id="responseform")
+            if not form:
+                return {"status": "error", "error": f"Could not find attempt form on page {page_num} (attempt may already be finished)."}
 
-        nextpage = next((v for n, v in fields if n == "nextpage"), None)
-        if nextpage is not None and nextpage != "-1":
-            return {"status": "error", "error": "Multi-page attempts are not supported yet."}
-
-        sesskey = next((v for n, v in fields if n == "sesskey"), self.sesskey)
-        if not sesskey:
-            return {"status": "error", "error": "Could not find sesskey."}
-
-        unmatched = []
-        for qdiv in form.find_all("div", id=re.compile(r"^q\d+$")):
-            slot = int(qdiv["id"][1:])
-            answer_div = qdiv.find("div", class_="answer")
-            if not answer_div:
-                continue
-            radios = answer_div.find_all("input", attrs={"type": ["radio", "checkbox"]})
-
-            if slot in answers:
-                target = answers[slot].strip().lower()
-                exact, partial = None, None
-                for inp in radios:
-                    inp_id = inp.get("id")
-                    label = answer_div.find("label", attrs={"for": inp_id}) if inp_id else None
-                    label_text = _clean_text(label).lower()
-                    if label_text == target:
-                        exact = inp
-                        break
-                    if partial is None and target in label_text:
-                        partial = inp
-                match = exact or partial
-                if match is None:
-                    unmatched.append(slot)
+            # collect every non-radio/checkbox field verbatim (hidden state, sequencechecks, etc.)
+            fields: list[tuple[str, str]] = []
+            for inp in form.find_all("input"):
+                name = inp.get("name")
+                if not name:
                     continue
-                fields.append((match["name"], match.get("value", "")))
-            else:
-                # preserve any already-selected answer for slots we're not touching
-                for inp in radios:
-                    if inp.has_attr("checked"):
-                        fields.append((inp["name"], inp.get("value", "")))
-                        break
+                itype = (inp.get("type") or "text").lower()
+                if itype in ("radio", "checkbox", "submit"):
+                    continue
+                fields.append((name, inp.get("value", "")))
+            for ta in form.find_all("textarea"):
+                name = ta.get("name")
+                if name:
+                    fields.append((name, ta.text or ""))
+            for sel in form.find_all("select"):
+                name = sel.get("name")
+                if not name:
+                    continue
+                opt = sel.find("option", selected=True) or sel.find("option")
+                fields.append((name, opt.get("value", "") if opt else ""))
 
-        if unmatched:
-            return {"status": "error", "error": f"Could not match answers for slots: {unmatched}"}
+            sesskey = next((v for n, v in fields if n == "sesskey"), sesskey or self.sesskey)
+            if not sesskey:
+                return {"status": "error", "error": "Could not find sesskey."}
+            nextpage = next((v for n, v in fields if n == "nextpage"), "-1")
 
-        fields.append(("next", "Next"))
-        multipart = [(name, (None, value)) for name, value in fields]
+            unmatched = []
+            for qdiv in form.find_all("div", id=re.compile(r"^q\d+$")):
+                slot = int(qdiv["id"][1:])
+                answer_div = qdiv.find("div", class_="answer")
+                if not answer_div:
+                    continue
+                radios = answer_div.find_all("input", attrs={"type": ["radio", "checkbox"]})
 
-        self._rate_limit("activity")
-        try:
-            save_resp = self.session.post(f"{RAIT_URL}/mod/quiz/processattempt.php", files=multipart)
-        except requests.RequestException as e:
-            return {"status": "error", "error": f"Failed to save answers: {e}"}
-        if save_resp.status_code not in (200, 303):
-            return {"status": "error", "error": f"Save answers returned HTTP {save_resp.status_code}"}
+                if slot in answers:
+                    target = answers[slot].strip().lower()
+                    exact, partial = None, None
+                    for inp in radios:
+                        inp_id = inp.get("id")
+                        label = answer_div.find("label", attrs={"for": inp_id}) if inp_id else None
+                        label_text = _clean_text(label).lower()
+                        if label_text == target:
+                            exact = inp
+                            break
+                        if partial is None and target in label_text:
+                            partial = inp
+                    match = exact or partial
+                    if match is None:
+                        unmatched.append(slot)
+                        continue
+                    fields.append((match["name"], match.get("value", "")))
+                else:
+                    # preserve any already-selected answer for slots we're not touching
+                    for inp in radios:
+                        if inp.has_attr("checked"):
+                            fields.append((inp["name"], inp.get("value", "")))
+                            break
+
+            if unmatched:
+                return {"status": "error", "error": f"Could not match answers for slots: {unmatched} (page {page_num})"}
+
+            fields.append(("next", "Next"))
+            multipart = [(name, (None, value)) for name, value in fields]
+
+            self._rate_limit("activity")
+            try:
+                save_resp = self.session.post(f"{RAIT_URL}/mod/quiz/processattempt.php", files=multipart)
+            except requests.RequestException as e:
+                return {"status": "error", "error": f"Failed to save answers on page {page_num}: {e}"}
+            if save_resp.status_code not in (200, 303):
+                return {"status": "error", "error": f"Save answers (page {page_num}) returned HTTP {save_resp.status_code}"}
+
+            if nextpage == "-1":
+                break
+            try:
+                page_num = int(nextpage)
+            except ValueError:
+                break
 
         # -- finish attempt --------------------------------------------------
         self._rate_limit("activity")
@@ -1935,7 +1946,9 @@ class MydyClient:
             state_div = qdiv.find("div", class_="state")
             rightanswer_div = qdiv.find("div", class_="rightanswer")
             text = _clean_text(rightanswer_div)
-            text = re.sub(r"^The correct answer is:\s*", "", text, flags=re.IGNORECASE)
+            # Multichoice: "The correct answer is: X" — True/False: "The correct answer is 'X'."
+            text = re.sub(r"^The correct answer is:?\s*", "", text, flags=re.IGNORECASE)
+            text = text.strip("'\" .")
             answers[slot] = {"state": _clean_text(state_div), "correct_answer": text}
 
         return {"attempt_id": str(attempt_id), "answers": answers}
