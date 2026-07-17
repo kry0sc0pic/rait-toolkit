@@ -21,6 +21,15 @@ MIN_DELAY = 0.5
 MAX_DELAY = 0.5
 DOWNLOAD_DELAY = 0.1
 
+# Inert placeholder content for exercising forum/post code paths against a
+# real course forum without leaving readable text visible to classmates.
+ZERO_WIDTH_SPACE = "\u200b"  # U+200B, invisible in rendered HTML
+
+
+def _clean_text(el) -> str:
+    """get_text() with internal whitespace/newlines collapsed to single spaces."""
+    return re.sub(r"\s+", " ", el.get_text(" ", strip=True)).strip() if el else ""
+
 
 class MydyClient:
     """Synchronous HTTP client for the MyDy LMS.
@@ -1239,6 +1248,19 @@ class MydyClient:
         m = re.search(r"id=(\d+)", course.get("url", ""))
         return m.group(1) if m else ""
 
+    def _forum_id_from_view(self, forum_view_url: str) -> str | None:
+        """Extract a forum's numeric id (for post.php?forum=) from its view page."""
+        self._rate_limit("activity")
+        try:
+            resp = self.session.get(forum_view_url)
+        except requests.RequestException:
+            return None
+        m = re.search(r"forum/post\.php\?forum=(\d+)", resp.text)
+        if m:
+            return m.group(1)
+        m = re.search(r'name="forum"\s+value="(\d+)"', resp.text)
+        return m.group(1) if m else None
+
     def mark_activity_viewed(self, url: str) -> dict:
         """GET an activity's view.php URL — this is what increments the widget."""
         if not self.logged_in:
@@ -1332,6 +1354,9 @@ class MydyClient:
             if progress_callback:
                 progress_callback("item_done", r)
 
+        forum_posts = self.ensure_forum_posts(cid, progress_callback=progress_callback)
+        quiz_solves = self.solve_pending_quizzes(cid, progress_callback=progress_callback)
+
         after = self.get_course_progress(cid)
         return {
             "course_name": course.get("name", ""),
@@ -1344,12 +1369,292 @@ class MydyClient:
             "marked": len(marked),
             "skipped": progress["viewed"],
             "failed": len(failed),
+            "forum_posts": forum_posts,
+            "quiz_solves": quiz_solves,
             "items": {
                 "marked": marked,
                 "skipped": progress["completed"],
                 "failed": failed,
             },
         }
+
+    def _get_own_user_id(self) -> str | None:
+        if self.user_id:
+            return self.user_id
+        self._rate_limit("activity")
+        try:
+            resp = self.session.get(f"{RAIT_URL}/my/")
+        except requests.RequestException:
+            return None
+        m = re.search(r"profilechange/changeprofile\.php\?id=(\d+)", resp.text)
+        if m:
+            self.user_id = m.group(1)
+        return self.user_id
+
+    def _list_forum_activities(self, course_id: str) -> list[dict]:
+        """All forum activities in a course (not just completion-tracked ones)."""
+        fetch = self._fetch_course_page(course_id)
+        if isinstance(fetch, str):
+            return []
+        soup, _ = fetch
+        forums: list[dict] = []
+        seen: set[str] = set()
+        for a in soup.find_all("a", href=re.compile(r"/mod/forum/view\.php\?id=\d+")):
+            href = a["href"]
+            m = re.search(r"id=(\d+)", href)
+            if not m:
+                continue
+            cmid = m.group(1)
+            if cmid in seen:
+                continue
+            seen.add(cmid)
+            name = self._get_activity_name(a) or _clean_text(a) or "Forum"
+            name = re.sub(r"\s+", " ", name).strip()
+            forums.append({"cmid": cmid, "name": name, "url": self._absolute_url(href)})
+        return forums
+
+    def _forums_with_my_posts(self, course_id: str, userid: str) -> set[str]:
+        """Forum names (by breadcrumb text) where this user already has a post.
+
+        mod/forum/user.php paginates at 5 posts/page — must walk every page or
+        older posts silently fall out of the "already posted" set.
+        """
+        names: set[str] = set()
+        page = 0
+        while True:
+            self._rate_limit("activity")
+            try:
+                resp = self.session.get(
+                    f"{RAIT_URL}/mod/forum/user.php?id={userid}&course={course_id}&mode=posts&page={page}"
+                )
+            except requests.RequestException:
+                break
+            soup = BeautifulSoup(resp.text, "html.parser")
+            post_divs = soup.find_all("div", class_="forumpost")
+            if not post_divs:
+                break
+            for post_div in post_divs:
+                subject_div = post_div.find("div", class_="subject")
+                if not subject_div:
+                    continue
+                spans = subject_div.find_all("span", recursive=False)
+                if len(spans) >= 2:
+                    names.add(_clean_text(spans[1]))
+            next_link = soup.find("a", string=re.compile(r"Next", re.IGNORECASE))
+            if not next_link:
+                break
+            page += 1
+        return names
+
+    def ensure_forum_posts(self, course_id: str | int, progress_callback=None) -> dict:
+        """Post a ZERO_WIDTH_SPACE discussion to every forum in the course where
+        this user doesn't already have a post (new discussion or reply).
+
+        Existence is checked against mod/forum/user.php's real post history, not
+        the "viewed" completion tracker — a forum can be marked "viewed" while
+        the student has never actually posted in it.
+        """
+        if not self.logged_in:
+            return {"error": "Not logged in."}
+        userid = self._get_own_user_id()
+        if not userid:
+            return {"error": "Could not determine own user id."}
+
+        forums = self._list_forum_activities(course_id)
+        already_posted = self._forums_with_my_posts(course_id, userid)
+
+        posted: list[str] = []
+        skipped: list[str] = []
+        failed: list[dict] = []
+        for forum in forums:
+            if forum["name"] in already_posted:
+                skipped.append(forum["name"])
+                continue
+            forum_id = self._forum_id_from_view(forum["url"])
+            if not forum_id:
+                failed.append({"name": forum["name"], "error": "Could not find forum id (may not allow new discussions)."})
+                continue
+            r = self.post_forum_discussion(forum_id, ZERO_WIDTH_SPACE, ZERO_WIDTH_SPACE)
+            if progress_callback:
+                progress_callback("forum_post", {"name": forum["name"], "result": r})
+            if r.get("status") in ("posted", "posted_unverified"):
+                posted.append(forum["name"])
+            else:
+                failed.append({"name": forum["name"], "error": r.get("error")})
+
+        return {
+            "forums_total": len(forums),
+            "already_posted": len(skipped),
+            "posted": posted,
+            "skipped": skipped,
+            "failed": failed,
+        }
+
+    # -- quiz auto-solving -----------------------------------------------------
+
+    def _list_quiz_activities(self, course_id: str) -> list[dict]:
+        fetch = self._fetch_course_page(course_id)
+        if isinstance(fetch, str):
+            return []
+        soup, _ = fetch
+        quizzes: list[dict] = []
+        seen: set[str] = set()
+        for a in soup.find_all("a", href=re.compile(r"/mod/quiz/view\.php\?id=\d+")):
+            href = a["href"]
+            m = re.search(r"id=(\d+)", href)
+            if not m:
+                continue
+            cmid = m.group(1)
+            if cmid in seen:
+                continue
+            seen.add(cmid)
+            name = self._get_activity_name(a) or _clean_text(a) or "Quiz"
+            name = re.sub(r"\s+", " ", name).strip()
+            quizzes.append({"cmid": cmid, "name": name, "url": self._absolute_url(href)})
+        return quizzes
+
+    def _quiz_attempt_stats(self, quiz_cmid: str | int) -> dict | None:
+        """Parse a quiz's own view page: attempts used, attempts allowed, and
+        whether any past attempt scored the maximum grade.
+        """
+        self._rate_limit("activity")
+        try:
+            resp = self.session.get(f"{RAIT_URL}/mod/quiz/view.php?id={quiz_cmid}")
+        except requests.RequestException:
+            return None
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        attempts_allowed = None
+        allowed_match = re.search(r"Attempts allowed:\s*(\d+)", soup.get_text(" "))
+        if allowed_match:
+            attempts_allowed = int(allowed_match.group(1))
+
+        table = soup.find("table", class_="quizattemptsummary")
+        if not table:
+            return {"attempts_used": 0, "attempts_allowed": attempts_allowed, "has_perfect": False}
+
+        rows = table.find_all("tr")
+        if not rows:
+            return {"attempts_used": 0, "attempts_allowed": attempts_allowed, "has_perfect": False}
+
+        header_cells = [_clean_text(c) for c in rows[0].find_all(["th", "td"])]
+        grade_col = next((i for i, h in enumerate(header_cells) if h.lower().startswith("grade")), None)
+        max_grade = None
+        if grade_col is not None:
+            m = re.search(r"/\s*([\d.]+)", header_cells[grade_col])
+            max_grade = float(m.group(1)) if m else None
+
+        has_perfect = False
+        data_rows = rows[1:]
+        for row in data_rows:
+            if grade_col is None or max_grade is None:
+                continue
+            cells = [_clean_text(c) for c in row.find_all(["th", "td"])]
+            if grade_col >= len(cells):
+                continue
+            m = re.match(r"([\d.]+)", cells[grade_col])
+            if m and float(m.group(1)) >= max_grade - 1e-6:
+                has_perfect = True
+
+        return {
+            "attempts_used": len(data_rows),
+            "attempts_allowed": attempts_allowed,
+            "has_perfect": has_perfect,
+        }
+
+    def solve_quiz_to_perfect(self, quiz_cmid: str | int) -> dict:
+        """Ensure a quiz has at least one attempt scoring the maximum grade.
+
+        Strategy: if no perfect attempt exists yet, take a throwaway "probe"
+        attempt (first option on every question — content doesn't matter),
+        read the correct-answer key Moodle discloses on that attempt's review
+        page, then take a second attempt answering for real using that key.
+        Requires the quiz to allow at least one more attempt than already used
+        (needs room for both the probe and the real attempt) and to disclose
+        correct answers on review (deferred feedback, "Highest grade" quizzes
+        like the ones in this course).
+        """
+        if not self.logged_in:
+            return {"status": "error", "error": "Not logged in."}
+
+        stats = self._quiz_attempt_stats(quiz_cmid)
+        if stats is None:
+            return {"status": "error", "error": "Could not read quiz attempt history."}
+        if stats["has_perfect"]:
+            return {"status": "already_perfect"}
+        if stats["attempts_allowed"] is not None:
+            remaining = stats["attempts_allowed"] - stats["attempts_used"]
+            if remaining < 2:
+                return {
+                    "status": "skipped",
+                    "error": f"Only {remaining} attempt(s) remaining "
+                             f"(allowed={stats['attempts_allowed']}, used={stats['attempts_used']}) "
+                             "— not enough room to safely probe then solve.",
+                }
+
+        probe = self.start_quiz_attempt(quiz_cmid)
+        if probe.get("status") != "started":
+            return {"status": "error", "error": f"Could not start probe attempt: {probe.get('error')}"}
+        probe_id = probe["attempt_id"]
+
+        questions = self.get_quiz_attempt_questions(probe_id)
+        if isinstance(questions, str):
+            return {"status": "error", "error": f"Could not read questions: {questions}"}
+
+        probe_answers = {
+            q["slot"]: q["options"][0]["text"]
+            for q in questions["questions"] if q["options"]
+        }
+        probe_submit = self.submit_quiz_attempt(probe_id, probe_answers)
+        if probe_submit.get("status") != "submitted":
+            return {"status": "error", "error": f"Probe attempt failed: {probe_submit.get('error')}"}
+
+        key = self.get_quiz_review_answer_key(probe_id)
+        if isinstance(key, str):
+            return {"status": "error", "error": f"Could not read answer key: {key}"}
+
+        real_answers = {
+            slot: info["correct_answer"]
+            for slot, info in key["answers"].items() if info.get("correct_answer")
+        }
+        if not real_answers:
+            return {"status": "error", "error": "Answer key was empty/undisclosed."}
+
+        solve = self.start_quiz_attempt(quiz_cmid)
+        if solve.get("status") != "started":
+            return {"status": "error", "error": f"Could not start solving attempt: {solve.get('error')}"}
+        solve_id = solve["attempt_id"]
+
+        solve_submit = self.submit_quiz_attempt(solve_id, real_answers)
+        if solve_submit.get("status") != "submitted":
+            return {"status": "error", "error": f"Solving attempt failed: {solve_submit.get('error')}"}
+
+        final_stats = self._quiz_attempt_stats(quiz_cmid)
+        return {
+            "status": "solved" if final_stats and final_stats["has_perfect"] else "attempted_not_perfect",
+            "probe_attempt_id": probe_id,
+            "probe_grade": probe_submit.get("grade"),
+            "solve_attempt_id": solve_id,
+            "solve_grade": solve_submit.get("grade"),
+        }
+
+    def solve_pending_quizzes(self, course_id: str | int, progress_callback=None) -> dict:
+        """Run solve_quiz_to_perfect on every quiz in the course that doesn't
+        already have a 100% attempt.
+        """
+        if not self.logged_in:
+            return {"error": "Not logged in."}
+        quizzes = self._list_quiz_activities(course_id)
+        results = []
+        for quiz in quizzes:
+            if progress_callback:
+                progress_callback("quiz_start", {"name": quiz["name"]})
+            r = self.solve_quiz_to_perfect(quiz["cmid"])
+            r["name"] = quiz["name"]
+            results.append(r)
+            if progress_callback:
+                progress_callback("quiz_done", r)
+        return {"quizzes_total": len(quizzes), "results": results}
 
     def hit_rate_maxx_all(
         self, courses: list[dict] | None = None, progress_callback=None
@@ -1386,3 +1691,356 @@ class MydyClient:
             },
             "courses": results,
         }
+
+    # -- quiz solving --------------------------------------------------------
+
+    def start_quiz_attempt(self, quiz_cmid: str | int) -> dict:
+        """POST startattempt.php to begin a fresh quiz attempt. Consumes an attempt."""
+        if not self.logged_in:
+            return {"status": "error", "error": "Not logged in."}
+        self._rate_limit("activity")
+        try:
+            view_resp = self.session.get(f"{RAIT_URL}/mod/quiz/view.php?id={quiz_cmid}")
+        except requests.RequestException as e:
+            return {"status": "error", "error": f"Failed to load quiz page: {e}"}
+        soup = BeautifulSoup(view_resp.text, "html.parser")
+        sesskey_input = soup.find("input", {"name": "sesskey"})
+        sesskey = sesskey_input["value"] if sesskey_input else self.sesskey
+        if not sesskey:
+            return {"status": "error", "error": "Could not find sesskey."}
+
+        self._rate_limit("activity")
+        try:
+            start_resp = self.session.post(
+                f"{RAIT_URL}/mod/quiz/startattempt.php",
+                data={"cmid": str(quiz_cmid), "sesskey": sesskey},
+            )
+        except requests.RequestException as e:
+            return {"status": "error", "error": f"Failed to start attempt: {e}"}
+
+        match = re.search(r"attempt=(\d+)", start_resp.url)
+        if not match:
+            return {"status": "error", "error": f"Could not determine attempt id from redirect: {start_resp.url}"}
+        return {"status": "started", "attempt_id": match.group(1)}
+
+    def get_quiz_attempt_questions(self, attempt_id: str | int) -> dict | str:
+        """Read-only: parse all questions/options from an in-progress quiz attempt.
+
+        Does not answer or submit anything.
+        """
+        if not self.logged_in:
+            return "Not logged in."
+        self._rate_limit("activity")
+        try:
+            resp = self.session.get(f"{RAIT_URL}/mod/quiz/attempt.php?attempt={attempt_id}")
+        except requests.RequestException as e:
+            return f"Failed to load attempt: {e}"
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        form = soup.find("form", id="responseform")
+        if not form:
+            return "Could not find attempt form (attempt may already be finished or invalid)."
+
+        skip_classes = {
+            "que", "deferredfeedback", "notyetanswered", "answered",
+            "complete", "incomplete", "correct", "incorrect", "partiallycorrect",
+        }
+        questions = []
+        for qdiv in form.find_all("div", id=re.compile(r"^q\d+$")):
+            slot = int(qdiv["id"][1:])
+            qtype = next((c for c in (qdiv.get("class") or []) if c not in skip_classes), "unknown")
+            qtext_div = qdiv.find("div", class_="qtext")
+            qtext = _clean_text(qtext_div)
+
+            options = []
+            answer_div = qdiv.find("div", class_="answer")
+            if answer_div:
+                for inp in answer_div.find_all("input", attrs={"type": ["radio", "checkbox"]}):
+                    inp_id = inp.get("id")
+                    label = answer_div.find("label", attrs={"for": inp_id}) if inp_id else None
+                    options.append({
+                        "name": inp.get("name"),
+                        "value": inp.get("value"),
+                        "text": _clean_text(label),
+                        "checked": inp.has_attr("checked"),
+                    })
+
+            questions.append({"slot": slot, "type": qtype, "text": qtext, "options": options})
+
+        questions.sort(key=lambda q: q["slot"])
+        return {"attempt_id": str(attempt_id), "questions": questions}
+
+    def submit_quiz_attempt(self, attempt_id: str | int, answers: dict[int, str]) -> dict:
+        """Answer and finish a quiz attempt.
+
+        answers: {slot_number: option_text} — matched against each question's
+        option labels (exact match preferred, falls back to substring match).
+        Slots not present in `answers` keep whatever was already selected on
+        the page (if anything). Only single-page attempts are supported.
+        """
+        if not self.logged_in:
+            return {"status": "error", "error": "Not logged in."}
+        self._rate_limit("activity")
+        try:
+            resp = self.session.get(f"{RAIT_URL}/mod/quiz/attempt.php?attempt={attempt_id}")
+        except requests.RequestException as e:
+            return {"status": "error", "error": f"Failed to load attempt: {e}"}
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        form = soup.find("form", id="responseform")
+        if not form:
+            return {"status": "error", "error": "Could not find attempt form (attempt may already be finished)."}
+
+        # collect every non-radio/checkbox field verbatim (hidden state, sequencechecks, etc.)
+        fields: list[tuple[str, str]] = []
+        for inp in form.find_all("input"):
+            name = inp.get("name")
+            if not name:
+                continue
+            itype = (inp.get("type") or "text").lower()
+            if itype in ("radio", "checkbox", "submit"):
+                continue
+            fields.append((name, inp.get("value", "")))
+        for ta in form.find_all("textarea"):
+            name = ta.get("name")
+            if name:
+                fields.append((name, ta.text or ""))
+        for sel in form.find_all("select"):
+            name = sel.get("name")
+            if not name:
+                continue
+            opt = sel.find("option", selected=True) or sel.find("option")
+            fields.append((name, opt.get("value", "") if opt else ""))
+
+        nextpage = next((v for n, v in fields if n == "nextpage"), None)
+        if nextpage is not None and nextpage != "-1":
+            return {"status": "error", "error": "Multi-page attempts are not supported yet."}
+
+        sesskey = next((v for n, v in fields if n == "sesskey"), self.sesskey)
+        if not sesskey:
+            return {"status": "error", "error": "Could not find sesskey."}
+
+        unmatched = []
+        for qdiv in form.find_all("div", id=re.compile(r"^q\d+$")):
+            slot = int(qdiv["id"][1:])
+            answer_div = qdiv.find("div", class_="answer")
+            if not answer_div:
+                continue
+            radios = answer_div.find_all("input", attrs={"type": ["radio", "checkbox"]})
+
+            if slot in answers:
+                target = answers[slot].strip().lower()
+                exact, partial = None, None
+                for inp in radios:
+                    inp_id = inp.get("id")
+                    label = answer_div.find("label", attrs={"for": inp_id}) if inp_id else None
+                    label_text = _clean_text(label).lower()
+                    if label_text == target:
+                        exact = inp
+                        break
+                    if partial is None and target in label_text:
+                        partial = inp
+                match = exact or partial
+                if match is None:
+                    unmatched.append(slot)
+                    continue
+                fields.append((match["name"], match.get("value", "")))
+            else:
+                # preserve any already-selected answer for slots we're not touching
+                for inp in radios:
+                    if inp.has_attr("checked"):
+                        fields.append((inp["name"], inp.get("value", "")))
+                        break
+
+        if unmatched:
+            return {"status": "error", "error": f"Could not match answers for slots: {unmatched}"}
+
+        fields.append(("next", "Next"))
+        multipart = [(name, (None, value)) for name, value in fields]
+
+        self._rate_limit("activity")
+        try:
+            save_resp = self.session.post(f"{RAIT_URL}/mod/quiz/processattempt.php", files=multipart)
+        except requests.RequestException as e:
+            return {"status": "error", "error": f"Failed to save answers: {e}"}
+        if save_resp.status_code not in (200, 303):
+            return {"status": "error", "error": f"Save answers returned HTTP {save_resp.status_code}"}
+
+        # -- finish attempt --------------------------------------------------
+        self._rate_limit("activity")
+        try:
+            finish_resp = self.session.post(
+                f"{RAIT_URL}/mod/quiz/processattempt.php",
+                data={
+                    "attempt": str(attempt_id),
+                    "finishattempt": "1",
+                    "timeup": "0",
+                    "slots": "",
+                    "sesskey": sesskey,
+                },
+            )
+        except requests.RequestException as e:
+            return {"status": "error", "error": f"Failed to finish attempt: {e}"}
+        if finish_resp.status_code not in (200, 303):
+            return {"status": "error", "error": f"Finish attempt returned HTTP {finish_resp.status_code}"}
+
+        # -- read back the grade ---------------------------------------------
+        self._rate_limit("activity")
+        grade = state = None
+        try:
+            review_resp = self.session.get(f"{RAIT_URL}/mod/quiz/review.php?attempt={attempt_id}")
+            review_soup = BeautifulSoup(review_resp.text, "html.parser")
+            table = review_soup.find("table")
+            if table:
+                for row in table.find_all("tr"):
+                    cells = row.find_all(["th", "td"])
+                    if len(cells) < 2:
+                        continue
+                    label = cells[0].get_text(strip=True).lower()
+                    if label == "state":
+                        state = cells[1].get_text(strip=True)
+                    elif label == "grade":
+                        grade = cells[1].get_text(strip=True)
+        except requests.RequestException:
+            pass
+
+        return {
+            "status": "submitted",
+            "attempt_id": str(attempt_id),
+            "state": state,
+            "grade": grade,
+            "answered_slots": sorted(answers.keys()),
+        }
+
+    def get_quiz_review_answer_key(self, attempt_id: str | int) -> dict | str:
+        """Read the disclosed correct-answer text for each question of a finished attempt.
+
+        Moodle's review page shows "The correct answer is: ..." per question
+        regardless of whether that attempt got it right, once finished. Useful
+        for feeding a corrected answer set into a follow-up attempt when the
+        course's own answer key doesn't match general/textbook knowledge.
+        """
+        if not self.logged_in:
+            return "Not logged in."
+        self._rate_limit("activity")
+        try:
+            resp = self.session.get(f"{RAIT_URL}/mod/quiz/review.php?attempt={attempt_id}")
+        except requests.RequestException as e:
+            return f"Failed to load review page: {e}"
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        answers = {}
+        for qdiv in soup.find_all("div", id=re.compile(r"^q\d+$")):
+            slot = int(qdiv["id"][1:])
+            state_div = qdiv.find("div", class_="state")
+            rightanswer_div = qdiv.find("div", class_="rightanswer")
+            text = _clean_text(rightanswer_div)
+            text = re.sub(r"^The correct answer is:\s*", "", text, flags=re.IGNORECASE)
+            answers[slot] = {"state": _clean_text(state_div), "correct_answer": text}
+
+        return {"attempt_id": str(attempt_id), "answers": answers}
+
+    # -- forum posting --------------------------------------------------------
+
+    def post_forum_discussion(self, forum_id: str | int, subject: str, message: str) -> dict:
+        """Start a new discussion thread in a forum.
+
+        message is wrapped in a <p> and posted as the discussion body HTML.
+        """
+        if not self.logged_in:
+            return {"status": "error", "error": "Not logged in."}
+        self._rate_limit("activity")
+        try:
+            resp = self.session.get(f"{RAIT_URL}/mod/forum/post.php?forum={forum_id}")
+        except requests.RequestException as e:
+            return {"status": "error", "error": f"Failed to load post form: {e}"}
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        form = soup.find("form", id="mformforum")
+        if not form:
+            return {"status": "error", "error": "Could not find post form (forum may not allow new discussions)."}
+
+        fields: list[tuple[str, str]] = []
+        for inp in form.find_all("input", attrs={"type": "hidden"}):
+            name = inp.get("name")
+            if not name:
+                continue
+            fields.append((name, inp.get("value", "")))
+
+        sesskey = next((v for n, v in fields if n == "sesskey"), self.sesskey)
+        if not sesskey:
+            return {"status": "error", "error": "Could not find sesskey."}
+        if not any(n == "message[itemid]" for n, _ in fields):
+            return {"status": "error", "error": "Could not find message draft itemid."}
+
+        fields.append(("subject", subject))
+        fields.append(("message[text]", f"<p>{message}</p>"))
+        fields.append(("submitbutton", "Post to forum"))
+
+        self._rate_limit("activity")
+        try:
+            post_resp = self.session.post(f"{RAIT_URL}/mod/forum/post.php", data=fields)
+        except requests.RequestException as e:
+            return {"status": "error", "error": f"Failed to post: {e}"}
+        if post_resp.status_code != 200:
+            return {"status": "error", "error": f"Post returned HTTP {post_resp.status_code}"}
+
+        # verify: re-fetch the discussion list and look for our subject
+        self._rate_limit("activity")
+        posted_url = None
+        try:
+            verify_resp = self.session.get(f"{RAIT_URL}/mod/forum/view.php?f={forum_id}")
+            verify_soup = BeautifulSoup(verify_resp.text, "html.parser")
+            for a in verify_soup.find_all("a"):
+                if _clean_text(a) == subject.strip() and a.get("href"):
+                    posted_url = a["href"]
+                    break
+        except requests.RequestException:
+            pass
+
+        return {
+            "status": "posted" if posted_url else "posted_unverified",
+            "forum_id": str(forum_id),
+            "subject": subject,
+            "url": posted_url,
+        }
+
+    def delete_forum_post(self, post_id: str | int) -> dict:
+        """Delete a forum post (or whole discussion, if it's the first post).
+
+        Two-step confirm flow, matching the browser: GET post.php?delete=<id>
+        to load the confirmation page and scrape sesskey, then POST
+        delete=<id>&confirm=<id>&sesskey=<sesskey> to actually delete.
+        """
+        if not self.logged_in:
+            return {"status": "error", "error": "Not logged in."}
+        self._rate_limit("activity")
+        try:
+            resp = self.session.get(f"{RAIT_URL}/mod/forum/post.php?delete={post_id}")
+        except requests.RequestException as e:
+            return {"status": "error", "error": f"Failed to load delete confirmation: {e}"}
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        sesskey_input = soup.find("input", {"name": "sesskey"})
+        sesskey = sesskey_input["value"] if sesskey_input else self.sesskey
+        if not sesskey:
+            return {"status": "error", "error": "Could not find sesskey (post may not exist or isn't yours)."}
+
+        self._rate_limit("activity")
+        try:
+            del_resp = self.session.post(
+                f"{RAIT_URL}/mod/forum/post.php",
+                data={"delete": str(post_id), "confirm": str(post_id), "sesskey": sesskey},
+            )
+        except requests.RequestException as e:
+            return {"status": "error", "error": f"Failed to confirm delete: {e}"}
+
+        if del_resp.status_code not in (200, 303):
+            # Moodle renders permission/business-rule failures (e.g. edit window
+            # expired) as an HTML "Error" page, often with a 404 status.
+            err_soup = BeautifulSoup(del_resp.text, "html.parser")
+            err_box = err_soup.find(class_="errorbox")
+            reason = _clean_text(err_box) if err_box else f"HTTP {del_resp.status_code}"
+            return {"status": "error", "error": f"Delete failed: {reason}"}
+
+        return {"status": "deleted", "post_id": str(post_id)}
