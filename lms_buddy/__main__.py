@@ -867,7 +867,7 @@ def get_gpa() -> str:
     if data.get("usn"):
         _save_creds({"usn": data["usn"]})
 
-    lines = [f"USN: {data['usn']}", f"CGPA: {data['cgpa']}", ""]
+    lines = [f"USN: {data['usn']}", f"Grade scheme: {data['scheme']}", f"CGPA: {data['cgpa']}", ""]
     for g in data["groups"]:
         lines.append(f"Semester {g['id']} — SGPA: {g['sgpa']}")
         for c in g["courses"]:
