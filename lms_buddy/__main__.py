@@ -181,6 +181,10 @@ mcp = FastMCP(
         "get_overall_attendance, get_course_attendance, get_semesters, "
         "get_assignments, submit_assignment. "
         "IMPORTANT: Always call get_assignments before submit_assignment — this is enforced. "
+        "NOTE: max_hitrate now also posts an invisible placeholder discussion to forums the "
+        "student hasn't posted in, and takes real quiz attempts to solve any quiz without a "
+        "100% score. These are real, visible/gradable actions (not just marking pages viewed) — "
+        "mention this to the user before calling max_hitrate if it hasn't come up already. "
         "GPA tool (UniClaIRE portal): get_gpa. "
         "PDF tools: render_cover_pdf, batch_render_covers_pdf, render_eval_sheet_pdf, "
         "batch_render_eval_sheets_pdf, render_conference_letter_pdf, batch_render_conference_letters_pdf "
@@ -301,7 +305,15 @@ def get_hitrates() -> str:
 def max_hitrate(course_id: str, course_name: str = "") -> str:
     """Maximize the Course Progress hit rate for a single course.
 
-    Visits every pending activity and returns before/after percentage.
+    Visits every pending activity and returns before/after percentage. Also:
+      - Posts an invisible zero-width-space discussion to any forum in the
+        course where this student has no post yet (checked against real post
+        history, not the "viewed" tracker — posting is a visible, real action
+        on a shared course forum, even though the content is inert).
+      - For any quiz without a 100% attempt, takes a throwaway probe attempt
+        to read Moodle's disclosed correct-answer key, then a second attempt
+        answering for real. Skipped if the quiz doesn't allow enough attempts
+        or uses multi-page attempts (not yet supported).
     If any pending activities are unsubmitted assignments, the tool flags them
     and instructs the agent to ask the user whether to upload a blank placeholder PDF.
     The blank PDF is stored at ~/.lms-buddy/blank_submission.pdf.

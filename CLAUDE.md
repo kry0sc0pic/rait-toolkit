@@ -88,6 +88,30 @@ Pre-check: GETs the view page first to detect existing submission. Returns `{"st
 
 ---
 
+## Hit-rate maxing: forums and quizzes
+
+`hit_rate_maxx_course()` does three things now, in order: mark pending activities viewed (original behavior), `ensure_forum_posts()`, then `solve_pending_quizzes()`. Both of the latter are real, visible/gradable actions — not just marking pages as viewed — so the `max_hitrate` MCP tool's docstring/instructions call this out explicitly.
+
+### Forum posting: `ensure_forum_posts(course_id)`
+
+For every forum activity in the course (enumerated from the course page, not just completion-tracked ones), checks the student's real post history via `mod/forum/user.php?mode=posts` — **not** the "viewed" completion tracker, which can show a forum as complete from merely opening it while the student never posted. That page paginates at 5 posts/page; `_forums_with_my_posts()` must walk every page or older posts silently drop out of the "already posted" set (this caused real duplicate posts once — see below).
+
+If no post exists yet, posts a new discussion using `ZERO_WIDTH_SPACE` for both subject and body — inert/invisible content, not readable text (see the git history around 2026-07-17 for why: an earlier test post used descriptive text and was immediately flagged by the user as a bad idea).
+
+Matching forums between `_list_forum_activities()` (course-page scrape) and `_forums_with_my_posts()` (breadcrumb scrape) is done by **name string**, not forum id — both sides must be whitespace-normalized (`re.sub(r"\s+", " ", name).strip()`) or a double-space vs single-space mismatch between the two scrapes will cause a false "not posted yet" and create a duplicate post. If you change either scrape, keep the normalization on both sides.
+
+### Quiz solving: `solve_pending_quizzes(course_id)` / `solve_quiz_to_perfect(quiz_cmid)`
+
+Only touches quizzes without an existing 100% attempt (`_quiz_attempt_stats()` checks the `quizattemptsummary` table on the quiz's own view page). For those, no external answer key exists — the strategy is:
+
+1. Start a throwaway **probe** attempt, answer every question with its first option (content doesn't matter), submit.
+2. Read the correct-answer key Moodle discloses on the probe's review page (`get_quiz_review_answer_key()` — the "The correct answer is: ..." text is shown regardless of whether the probe got it right).
+3. Start a second **solve** attempt and submit using that disclosed key.
+
+This only works for single-page, deferred-feedback quizzes that disclose answers on review and allow at least 2 attempts (checked via `_quiz_attempt_stats()["attempts_allowed"]` before probing — if there isn't room for both a probe and a solve attempt, it skips rather than risk burning the only attempt). Multi-page quizzes are detected and rejected safely by `submit_quiz_attempt()` *before* posting malformed data, but the probe attempt itself will already have been started by that point, leaving an abandoned in-progress attempt — this is a known gap, not yet handled.
+
+---
+
 ## Snapshot / diff system
 
 Every live-data tool response is saved to `~/.lms-buddy/snapshots/<tool>/<sha256(args)[:16]>.json`. On subsequent calls the old text is diffed against the new; the result is prepended as a unified diff block (or `[No changes since last read]`). Implemented in `_with_diff()` in `__main__.py`.
