@@ -118,7 +118,7 @@ A blank placeholder PDF is kept at `~/.lms-buddy/blank_submission.pdf` (auto-gen
 
 ### Forum posts and quiz attempts from `max_hitrate`
 
-`max_hitrate` no longer just marks pages "viewed" — it also posts an invisible placeholder discussion to any forum where the student has no post yet, and takes real quiz attempts to solve any quiz that doesn't already have a 100% score. Both are real actions on the student's live gradebook/forum history (visible to classmates for forum posts, permanent grade records for quizzes), unlike simply visiting a page. Mention this to the user before calling `max_hitrate` for the first time in a session if it hasn't already come up.
+`max_hitrate` no longer just marks pages "viewed" — it also posts an invisible placeholder discussion to any forum where the student has no post yet, and takes real quiz attempts to solve any quiz that doesn't already have a 100% score (same logic as the standalone `solve_quizzes` tool). Both are real actions on the student's live gradebook/forum history (visible to classmates for forum posts, permanent grade records for quizzes), unlike simply visiting a page. Mention this to the user before calling `max_hitrate` or `solve_quizzes` for the first time in a session if it hasn't already come up.
 
 ---
 
@@ -126,7 +126,7 @@ A blank placeholder PDF is kept at `~/.lms-buddy/blank_submission.pdf` (auto-gen
 
 | Category | Tools |
 |----------|-------|
-| LMS | `list_subjects`, `list_files`, `download_file`, `get_hitrates`, `max_hitrate`, `get_overall_attendance`, `get_course_attendance`, `get_semesters` |
+| LMS | `list_subjects`, `list_files`, `download_file`, `get_hitrates`, `max_hitrate`, `solve_quizzes`, `get_overall_attendance`, `get_course_attendance`, `get_semesters` |
 | Assignments | `get_assignments`, `submit_assignment` |
 | GPA | `get_gpa` |
 | PDF | `render_cover_pdf`, `batch_render_covers_pdf`, `render_eval_sheet_pdf`, `batch_render_eval_sheets_pdf` |

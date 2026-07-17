@@ -140,7 +140,7 @@ The server runs over stdio via `uvx`. Point your client to:
 
 ---
 
-## Tools (20 total)
+## Tools (21 total)
 
 ### LMS — MyDy
 
@@ -151,6 +151,7 @@ The server runs over stdio via `uvx`. Point your client to:
 | `download_file` | Download a file to disk (defaults to `~/Downloads`) |
 | `get_hitrates` | Course Progress % for all current courses |
 | `max_hitrate` | Visit every pending activity for a course to push it to 100%; also posts a placeholder discussion to any forum with no post yet and solves any quiz without a 100% attempt; detects unsubmitted assignments and prompts for blank placeholder upload |
+| `solve_quizzes` | Standalone: bring every quiz in a course to a 100% attempt (probe for the answer key, then solve for real); skips quizzes already at 100% |
 | `get_overall_attendance` | Aggregate attendance + per-subject breakdown with per-class drill-down IDs |
 | `get_course_attendance` | Per-class attendance records for a subject (date, time, present/absent) |
 | `get_semesters` | Courses grouped by semester label (Semester V, Semester VI, …) |
@@ -239,7 +240,7 @@ vercel           # deploy
 ```
 rait-toolkit/
 ├── lms_buddy/               # uvx-installable MCP package
-│   ├── __main__.py          #   FastMCP server — 20 tools + 1 prompt
+│   ├── __main__.py          #   FastMCP server — 21 tools + 1 prompt
 │   ├── client.py            #   MyDy LMS HTTP client
 │   ├── gpa.py               #   UniClaIRE portal GPA fetcher
 │   ├── render.py            #   LaTeX PDF rendering
