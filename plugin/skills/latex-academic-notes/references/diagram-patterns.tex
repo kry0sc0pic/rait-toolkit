@@ -1,0 +1,165 @@
+% ============================================================
+% TikZ diagram archetypes for the latex-academic-notes style.
+% Every snippet assumes assets/preamble.tex has already been loaded
+% (uses its core/box/sbox/tag/arr/darr styles and \diagramcap macro).
+% Copy the closest archetype to what you need, then relabel nodes,
+% adjust counts, and re-word the \diagramcap{} caption.
+% ============================================================
+
+
+% ------------------------------------------------------------
+% ARCHETYPE 1: Linear pipeline (input -> stage -> stage -> output)
+% Use for: any multi-step process -- a processing pipeline, an algorithm's
+% phases, a request/response flow. This is the single most common diagram
+% need in course notes (e.g. "Input Split -> Map -> Shuffle -> Reduce -> Output").
+% ------------------------------------------------------------
+\begin{center}
+\begin{tikzpicture}[node distance=0.5cm and 0.6cm]
+\node[box, fill=hbrand!8, text width=2.1cm] (n1) {Stage 1\\Description};
+\node[box, right=of n1, text width=2.1cm] (n2) {Stage 2\\Description};
+\node[box, right=of n2, text width=2.1cm] (n3) {Stage 3\\Description};
+\node[core, right=of n3, text width=2.1cm] (out) {Final\\Output};
+\draw[arr] (n1) -- (n2);
+\draw[arr] (n2) -- (n3);
+\draw[arr] (n3) -- (out);
+\end{tikzpicture}
+\end{center}
+\diagramcap{Caption describing what this pipeline computes}
+
+
+% ------------------------------------------------------------
+% ARCHETYPE 2: Hub-and-spoke (one core surrounded by satellites)
+% Use for: an ecosystem map, "core + surrounding tools", a component with
+% many peers/plugins. Keeps satellite labels short (\footnotesize via sbox)
+% since there are usually 6-10 of them; group related satellites with a
+% \node[tag] annotation above/below a cluster (e.g. "Ingestion", "Coordination").
+% ------------------------------------------------------------
+\begin{center}
+\begin{tikzpicture}[node distance=0.9cm and 0.9cm]
+\node[core, minimum width=3.2cm, minimum height=1.4cm] (core) {Core\\System};
+\node[sbox, above=1.5cm of core, xshift=-2.6cm] (s1) {Tool A};
+\node[sbox, above=1.5cm of core, xshift=-0.85cm] (s2) {Tool B};
+\node[sbox, above=1.5cm of core, xshift=0.85cm] (s3) {Tool C};
+\node[sbox, above=1.5cm of core, xshift=2.6cm] (s4) {Tool D};
+\node[sbox, below=1.5cm of core, xshift=-1.7cm] (s5) {Tool E};
+\node[sbox, below=1.5cm of core, xshift=1.7cm] (s6) {Tool F};
+\node[sbox, left=2.6cm of core] (s7) {Tool G};
+\node[sbox, right=2.6cm of core] (s8) {Tool H};
+\node[tag, above=0.05cm of s1, xshift=0.85cm] {Category label};
+\node[tag, below=0.05cm of s5, xshift=1.7cm] {Category label};
+\foreach \n in {s1,s2,s3,s4,s5,s6,s7,s8}
+  \draw[arr] (core) -- (\n);
+\end{tikzpicture}
+\end{center}
+\diagramcap{Caption naming the core system and what surrounds it}
+
+
+% ------------------------------------------------------------
+% ARCHETYPE 3: Master/slave or client/server architecture
+% Use for: any system with one coordinator and several workers -- a
+% distributed system's master node, a client talking to replicated
+% servers, a job scheduler and its workers.
+% ------------------------------------------------------------
+\begin{center}
+\begin{tikzpicture}[node distance=0.6cm and 1.2cm]
+\node[core, text width=2.6cm] (master) {Master\\Coordinator role(s)};
+\node[box, below=1.4cm of master, xshift=-3.4cm, text width=2.2cm] (s1) {Worker 1\\Role};
+\node[box, below=1.4cm of master, xshift=0cm, text width=2.2cm] (s2) {Worker 2\\Role};
+\node[box, below=1.4cm of master, xshift=3.4cm, text width=2.2cm] (s3) {Worker 3\\Role};
+\draw[arr] (master) -- node[tag, left]{what flows down} (s1);
+\draw[arr] (master) -- (s2);
+\draw[arr] (master) -- node[tag, right]{what flows down} (s3);
+\end{tikzpicture}
+\end{center}
+\diagramcap{Caption naming the master and worker roles}
+
+
+% ------------------------------------------------------------
+% ARCHETYPE 4: Side-by-side comparison panels
+% Use for: contrasting two approaches (replication vs. sharding, row- vs.
+% column-oriented storage, traditional vs. new approach). IMPORTANT: use
+% absolute coordinates (node ... at (x,y)) for each panel rather than chained
+% relative "of" positioning -- two panels built with relative positioning
+% tend to drift into each other and overlap once there's more than one row
+% of nodes per panel.
+% ------------------------------------------------------------
+\begin{center}
+\begin{tikzpicture}
+% left panel, centered at x = -4.3
+\node[font=\small\bfseries] at (-4.3,2.3) {Approach A};
+\node[core, minimum width=1.4cm] (asrc) at (-4.3,1.3) {Source};
+\node[sbox, minimum width=2.1cm] (a1) at (-6.6,0) {Node 1\\\footnotesize detail};
+\node[sbox, minimum width=2.1cm] (a2) at (-4.3,0) {Node 2\\\footnotesize detail};
+\node[sbox, minimum width=2.1cm] (a3) at (-2,0) {Node 3\\\footnotesize detail};
+\draw[arr] (asrc) -- (a1); \draw[arr] (asrc) -- (a2); \draw[arr] (asrc) -- (a3);
+\node[tag] at (-4.3,-1.1) {one-line summary of Approach A};
+% divider
+\draw[gray!35] (0,2.6) -- (0,-1.5);
+% right panel, centered at x = 4.3
+\node[font=\small\bfseries] at (4.3,2.3) {Approach B};
+\node[core, minimum width=1.4cm] (bsrc) at (4.3,1.3) {Source};
+\node[sbox, minimum width=2.1cm] (b1) at (2,0) {Node 1\\\footnotesize detail};
+\node[sbox, minimum width=2.1cm] (b2) at (4.3,0) {Node 2\\\footnotesize detail};
+\node[sbox, minimum width=2.1cm] (b3) at (6.6,0) {Node 3\\\footnotesize detail};
+\draw[arr] (bsrc) -- (b1); \draw[arr] (bsrc) -- (b2); \draw[arr] (bsrc) -- (b3);
+\node[tag] at (4.3,-1.1) {one-line summary of Approach B};
+\end{tikzpicture}
+\end{center}
+\diagramcap{Approach A vs. Approach B -- one-line contrast}
+
+
+% ------------------------------------------------------------
+% ARCHETYPE 5: Triangle / "pick N of M" trade-off (e.g. CAP theorem)
+% Use for: any theorem or trade-off framed as "you can only have two of
+% these three properties" or similar three-way tension.
+% ------------------------------------------------------------
+\begin{center}
+\begin{tikzpicture}
+\coordinate (A) at (0,3);
+\coordinate (B) at (-2.6,-1.2);
+\coordinate (C) at (2.6,-1.2);
+\draw[hbrand, thick] (A) -- (B) -- (C) -- cycle;
+\node[above] at (A) {\small\textbf{Property 1}};
+\node[below left] at (B) {\small\textbf{Property 2}};
+\node[below right] at (C) {\small\textbf{Property 3}};
+\node[font=\scriptsize\itshape, text=hgray] at (0,0.3) {Pick any 2};
+\node[sbox, font=\scriptsize, minimum width=1.6cm] at ($(A)!0.5!(B)+(-0.6,0.1)$) {Example X};
+\node[sbox, font=\scriptsize, minimum width=1.6cm] at ($(A)!0.5!(C)+(0.6,0.1)$) {Example Y};
+\node[sbox, font=\scriptsize, minimum width=1.9cm] at ($(B)!0.5!(C)+(0,-0.55)$) {Example Z};
+\end{tikzpicture}
+\end{center}
+\diagramcap{Caption naming the theorem/trade-off and what each corner means}
+
+
+% ------------------------------------------------------------
+% ARCHETYPE 6: Ring / cycle diagram (e.g. consistent hashing)
+% Use for: anything modeled as nodes/items placed around a circle --
+% a hash ring, a round-robin cycle, a circular buffer.
+% ------------------------------------------------------------
+\begin{center}
+\begin{tikzpicture}
+\def\R{2.7}
+\draw[gray!50, thick] (0,0) circle (\R);
+\foreach \ang/\lbl in {90/N1, 200/N2, 300/N3, 340/N4}{
+  \node[circle, draw=hbrand, thick, fill=hbrand!25, minimum size=0.6cm, font=\footnotesize] (n-\lbl) at (\ang:\R) {\lbl};
+}
+\foreach \ang/\lbl in {40/k1, 150/k2, 250/k3, 320/k4}{
+  \fill[gray!70!black] (\ang:\R*0.72) circle (1.6pt);
+  \node[font=\scriptsize] at (\ang:\R*0.6) {\lbl};
+}
+\node[tag] at (0,-\R-0.7) {one-line explanation of how items map onto the ring};
+\end{tikzpicture}
+\end{center}
+\diagramcap{Caption naming what the ring represents}
+
+
+% ------------------------------------------------------------
+% Notes on adapting these:
+% - Keep the caption pattern "Fig.: <description>" via \diagramcap -- it's
+%   what makes figures scannable in a long document and mirrors how the
+%   source slides usually caption their own diagrams.
+% - If a diagram needs more than ~10 nodes, it usually means it should be
+%   split into two smaller diagrams or partially replaced by a table --
+%   TikZ diagrams that try to show everything at once tend to become the
+%   overlapping-label bugs described in SKILL.md.
+% ------------------------------------------------------------

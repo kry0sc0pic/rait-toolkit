@@ -1,0 +1,131 @@
+% ============================================================
+% Reusable preamble for LaTeX academic notes / answer-key documents.
+% Copy this whole block into a new .tex file, then write \section /
+% \subsection content (and \diagramph-style TikZ figures, longtables,
+% keybox call-outs) below \begin{document}.
+%
+% Rename SUBJECT / AUTHOR placeholders below; nothing else needs to change
+% to get the same visual style used across this document family.
+% ============================================================
+\documentclass[11pt,a4paper]{article}
+
+% ---------- Packages ----------
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{amsmath}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc,decorations.pathmorphing}
+\usepackage{hyperref}
+\usepackage{needspace}
+\usepackage{parskip}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins,breakable}
+
+% ---------- Colors (swap these three for a different palette/subject) ----------
+\definecolor{hbrand}{RGB}{31,73,125}   % primary accent -- headers, diagram fills
+\definecolor{hgray}{RGB}{90,90,90}     % secondary text -- captions, running heads
+\definecolor{hlight}{RGB}{235,241,247} % keybox background tint
+
+% ---------- Section styling ----------
+% "Module \thesection" -- change the literal word "Module" to "Unit"/"Chapter"/
+% "Week" etc. to match how the source material refers to its own top-level divisions.
+\titleformat{\section}{\normalfont\Large\bfseries\color{hbrand}}{Module \thesection}{0.6em}{}
+\titlespacing*{\section}{0pt}{18pt}{10pt}
+\titleformat{\subsection}{\normalfont\large\bfseries\color{black}}{\thesubsection}{0.6em}{}
+\titlespacing*{\subsection}{0pt}{14pt}{6pt}
+\titleformat{\subsubsection}{\normalfont\normalsize\bfseries\color{hbrand!80!black}}{}{0em}{}
+\titlespacing*{\subsubsection}{0pt}{10pt}{4pt}
+
+% ---------- Header / Footer ----------
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\lhead{\small\color{hgray}SUBJECT NAME -- DOCUMENT TITLE}  % <-- edit
+\rhead{\small\color{hgray}\leftmark}
+\cfoot{\thepage}
+
+% ---------- Hyperref / PDF metadata ----------
+\hypersetup{
+  colorlinks=true,
+  linkcolor=hbrand,
+  urlcolor=hbrand,
+  pdftitle={SUBJECT NAME - DOCUMENT TITLE},   % <-- edit
+  pdfauthor={AUTHOR NAME}                     % <-- edit
+}
+
+% ---------- Diagram caption wrapper ----------
+% Put this directly under every TikZ figure: \diagramcap{Description of the diagram}
+\newcommand{\diagramcap}[1]{%
+\begin{center}
+{\small\itshape\color{hgray} Fig.: #1}
+\end{center}
+\vspace{2pt}
+}
+
+% ---------- Key-point call-out box ----------
+% \begin{keybox}[Optional Custom Title]  ...content...  \end{keybox}
+\newtcolorbox{keybox}[1][Key Points]{
+  colback=hlight, colframe=hbrand!70, boxrule=0.6pt, arc=1.5mm,
+  fonttitle=\bfseries\small, coltitle=white, colbacktitle=hbrand,
+  title=#1, left=6pt, right=6pt, top=4pt, bottom=4pt, breakable
+}
+
+% ---------- TikZ node/arrow styles used by every diagram ----------
+% core = the "main"/emphasized node in a diagram (e.g. a source, a master, a core system)
+% box  = a standard labeled box
+% sbox = a smaller/secondary box (e.g. satellite nodes, table-like cells inside a figure)
+% tag  = small italic annotation text next to an arrow or node
+% arr / darr = solid / dashed arrow
+\tikzset{
+  core/.style={draw=hbrand, thick, rounded corners=2pt, fill=hbrand!22, minimum height=0.9cm, align=center, font=\small\bfseries, text=black},
+  box/.style={draw=hbrand, thick, rounded corners=2pt, fill=hbrand!10, minimum height=0.9cm, align=center, font=\small, text=black},
+  sbox/.style={draw=gray!70, semithick, rounded corners=2pt, fill=gray!8, minimum height=0.75cm, align=center, font=\footnotesize, text=black},
+  tag/.style={font=\scriptsize\itshape, text=hgray},
+  arr/.style={-{Latex[length=2.2mm,width=1.6mm]}, thick, gray!45!black},
+  darr/.style={-{Latex[length=2.2mm,width=1.6mm]}, thick, dashed, gray!45!black}
+}
+
+% ---------- List / table conventions ----------
+\setlist[itemize]{topsep=2pt,itemsep=2pt,parsep=0pt,leftmargin=1.5em}
+\setlist[enumerate]{topsep=2pt,itemsep=2pt,parsep=0pt,leftmargin=1.7em}
+\renewcommand{\arraystretch}{1.2}
+% Wrapped-text table columns: use L{3cm} / C{3cm} instead of plain l/c in longtable.
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+
+\begin{document}
+
+% ================= TITLE PAGE =================
+\begin{titlepage}
+\centering
+\vspace*{2.3cm}
+{\Huge\bfseries\color{hbrand} SUBJECT NAME}\\[0.6cm]           % <-- edit
+{\Large DOCUMENT TITLE (e.g. Complete Prep Notes -- Modules 1--3)}\\[1.2cm] % <-- edit
+\rule{0.5\linewidth}{0.4pt}\\[1.2cm]
+      % <-- edit
+{\large \today}\\[2.2cm]
+{\large\itshape Topics Covered:}\\[0.4cm]
+\begin{minipage}{0.8\linewidth}
+\centering
+TOPIC 1 \(\cdot\) TOPIC 2 \(\cdot\) TOPIC 3                    % <-- edit
+\end{minipage}
+\vfill
+{\small ONE-PARAGRAPH SCOPE DESCRIPTION -- what this document covers and how it's organized.} % <-- edit
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% Begin content: \section{...} per module/unit, \subsection{...} per lecture/topic/question.
+
+\end{document}
