@@ -108,7 +108,7 @@ Only touches quizzes without an existing 100% attempt (`_quiz_attempt_stats()` c
 2. Read the correct-answer key Moodle discloses on the probe's review page (`get_quiz_review_answer_key()` — the "The correct answer is: ..." text is shown regardless of whether the probe got it right).
 3. Start a second **solve** attempt and submit using that disclosed key.
 
-This only works for single-page, deferred-feedback quizzes that disclose answers on review and allow at least 2 attempts (checked via `_quiz_attempt_stats()["attempts_allowed"]` before probing — if there isn't room for both a probe and a solve attempt, it skips rather than risk burning the only attempt). Multi-page quizzes are detected and rejected safely by `submit_quiz_attempt()` *before* posting malformed data, but the probe attempt itself will already have been started by that point, leaving an abandoned in-progress attempt — this is a known gap, not yet handled.
+This works for both single- and multi-page quizzes — `submit_quiz_attempt()` walks each page via `mod/quiz/attempt.php?attempt=<id>&page=<n>`, reading the `nextpage` hidden field per page to know whether to advance or (on `-1`) proceed to `summary.php` and finish. Requires deferred-feedback quizzes that disclose answers on review and allow at least 2 attempts (checked via `_quiz_attempt_stats()["attempts_allowed"]` before probing — if there isn't room for both a probe and a solve attempt, it skips rather than risk burning the only attempt).
 
 ---
 
