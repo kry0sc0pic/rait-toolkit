@@ -319,11 +319,19 @@ def _tool_max_hitrate(client: MydyClient, args: dict, user: str) -> dict:
 
     _cache_invalidate_prefix((user, "get_hitrates"))
 
+    fp = result.get("forum_posts") or {}
+    qs = result.get("quiz_solves") or {}
+    quiz_solved = sum(1 for r in qs.get("results", []) if r.get("status") == "solved")
+    quiz_skipped = sum(1 for r in qs.get("results", []) if r.get("status") == "already_perfect")
+    quiz_failed = sum(1 for r in qs.get("results", []) if r.get("status") in ("error", "skipped"))
+
     summary = (
         f"{result.get('course_name') or course['name'] or course_id}: "
         f"{result.get('percent_before', '?')}% → {result.get('percent_after', '?')}% "
         f"(marked={result.get('marked', 0)}, "
         f"skipped={result.get('skipped', 0)}, "
-        f"failed={result.get('failed', 0)})"
+        f"failed={result.get('failed', 0)}); "
+        f"forum posts: {len(fp.get('posted', []))} new, {fp.get('already_posted', 0)} already had one; "
+        f"quizzes: {quiz_solved} solved to 100%, {quiz_skipped} already perfect, {quiz_failed} failed/skipped"
     )
     return _text_result(summary, structured=result)

@@ -116,6 +116,10 @@ When `force=True`:
 
 A blank placeholder PDF is kept at `~/.lms-buddy/blank_submission.pdf` (auto-generated on first use). When `max_hitrate` detects pending assignment activities with no submission, it will prompt you to ask the user whether they want a blank PDF submitted to fulfil the completion requirement. Use `AskFollowupQuestion` for this — do not submit automatically.
 
+### Forum posts and quiz attempts from `max_hitrate`
+
+`max_hitrate` no longer just marks pages "viewed" — it also posts an invisible placeholder discussion to any forum where the student has no post yet, and takes real quiz attempts to solve any quiz that doesn't already have a 100% score. Both are real actions on the student's live gradebook/forum history (visible to classmates for forum posts, permanent grade records for quizzes), unlike simply visiting a page. Mention this to the user before calling `max_hitrate` for the first time in a session if it hasn't already come up.
+
 ---
 
 ## Tool reference summary
