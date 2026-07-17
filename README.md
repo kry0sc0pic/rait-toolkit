@@ -70,11 +70,22 @@ Replace `/path/to/rait-toolkit` with your local clone path. Restart Claude Deskt
 
 ### Claude Code (CLI)
 
+**Option A — from the marketplace (no clone needed):**
+
+```
+/plugin marketplace add kry0sc0pic/rait-toolkit
+/plugin install lms-buddy@rait-toolkit
+```
+
+The first command registers this repo as a plugin marketplace (GitHub `owner/repo` shorthand — no clone or full URL needed); the second installs the `lms-buddy` plugin from it. Update later with `/plugin marketplace update rait-toolkit`; remove with `/plugin uninstall lms-buddy` and `/plugin marketplace remove rait-toolkit`.
+
+**Option B — from a local clone:**
+
 ```sh
 /plugin install .
 ```
 
-Run from inside the cloned repo. Then set credentials in Claude Code settings:
+Run from inside the cloned repo. Either way, then set credentials in Claude Code settings:
 - **macOS**: Cmd+, → Environment
 - **Ubuntu**: `claude config` or edit `~/.claude/settings.json`
 ```json
@@ -250,8 +261,12 @@ rait-toolkit/
 │   ├── .claude-plugin/
 │   │   └── plugin.json      #   MCP server declaration + metadata
 │   └── skills/
-│       └── lab-writeup/
-│           └── SKILL.md     #   /lab-writeup slash command
+│       ├── lab-writeup/
+│       │   └── SKILL.md     #   /lab-writeup slash command
+│       └── latex-academic-notes/
+│           ├── SKILL.md     #   Course notes/slides -> polished LaTeX study PDF
+│           ├── assets/preamble.tex
+│           └── references/diagram-patterns.tex
 ├── .claude-plugin/
 │   └── marketplace.json     #   Marketplace wrapper
 ├── api/                     # Vercel serverless API (remote MCP + web backend)
