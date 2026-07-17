@@ -16,23 +16,68 @@ UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
 )
 
-LETTER_GRADE_MAP = {
+# Legacy scheme: O=10, A=9, B=8, C=7, D=6, E=5, P=4, F/AB=0
+LEGACY_LETTER_GRADE_MAP = {
     "O": "10", "A": "9", "B": "8", "C": "7",
     "D": "6", "E": "5", "P": "4", "F": "0", "AB": "0",
 }
+# New scheme (DY24+ batch): O=10, A+=9, A=8, B+=7, B=6, C=5, P=4, F/AB=0
+NEW_LETTER_GRADE_MAP = {
+    "O": "10", "A+": "9", "A": "8", "B+": "7",
+    "B": "6", "C": "5", "P": "4", "F": "0", "AB": "0",
+}
 VALID_GRADES = {"10", "9", "8", "7", "6", "5", "4", "0"}
 
+_EXAM_CODE_RE = re.compile(r"^([A-Za-z])-(\d{4})-(\d+)$")
 
-def _normalize_grade(raw: str) -> str:
+
+def _detect_scheme(usn: str) -> str:
+    """DY24+ batch USNs use the new grade scheme; everything else is legacy."""
+    m = re.match(r"^DY(\d{2})", usn, re.IGNORECASE)
+    return "new" if m and int(m.group(1)) >= 24 else "legacy"
+
+
+def _normalize_grade(raw: str, scheme: str = "legacy") -> str:
     upper = raw.strip().upper()
-    if upper in LETTER_GRADE_MAP:
-        return LETTER_GRADE_MAP[upper]
+    grade_map = NEW_LETTER_GRADE_MAP if scheme == "new" else LEGACY_LETTER_GRADE_MAP
+    if upper in grade_map:
+        return grade_map[upper]
     try:
         n = round(float(raw))
         s = str(n)
         return s if s in VALID_GRADES else ""
     except ValueError:
         return ""
+
+
+def _build_exam_list(list_data: dict) -> list[dict]:
+    """Dedup exams by trimester letter, keeping only the latest year/attempt.
+
+    Exam codes look like "A-2023-1" (letter-year-attempt); a re-attempt (ATKT)
+    shows up as a second entry for the same letter with a higher attempt
+    number, and a stale one must not be double-counted. Codes that don't match
+    this shape are passed through keyed on themselves. Result is sorted
+    oldest-to-newest by trimester letter.
+    """
+    exam_map: dict[str, dict] = {}
+    for r in (list_data.get("data") or []):
+        code = str(r["year"])
+        m = _EXAM_CODE_RE.match(code)
+        if m:
+            letter, year, attempt = m.group(1), m.group(2), m.group(3)
+            prev = exam_map.get(letter)
+            if not prev or year > prev["year"] or (year == prev["year"] and int(attempt) > int(prev["attempt"])):
+                exam_map[letter] = {
+                    "year": year, "attempt": attempt,
+                    "yearCode": code, "examName": str(r.get("examname", "")),
+                }
+        else:
+            exam_map[code] = {"year": "", "attempt": "0", "yearCode": code, "examName": str(r.get("examname", ""))}
+
+    return [
+        {"yearCode": e["yearCode"], "examName": e["examName"]}
+        for _, e in sorted(exam_map.items(), key=lambda kv: kv[0])
+    ]
 
 
 def _calculate_sgpa(courses: list[dict]) -> float:
@@ -54,6 +99,7 @@ def fetch_gpa(regno: str, passwd: str) -> dict:
     Returns:
         {
           "usn": str,
+          "scheme": "legacy" | "new",
           "groups": [
             {
               "id": "1",
@@ -102,18 +148,15 @@ def fetch_gpa(regno: str, passwd: str) -> dict:
     ).strip()
     if not usn:
         raise ValueError("Could not read USN from portal profile.")
+    scheme = _detect_scheme(usn)
 
-    # 3. List exams (portal returns newest-first; reverse to oldest-first)
+    # 3. List exams, deduped by trimester (keeps only the latest attempt)
     list_res = session.get(
         f"{PORTAL_BASE}/src/results_new.php",
         params={"a": "getResAll", "_": int(time.time() * 1000)},
         timeout=10,
     )
-    list_data = list_res.json()
-    exams = [
-        {"yearCode": str(r["year"]), "examName": str(r["examname"])}
-        for r in (list_data.get("data") or [])
-    ][::-1]  # oldest first
+    exams = _build_exam_list(list_res.json())
 
     # 4. Fetch each exam's marksheet
     raw_groups: list[list[dict]] = []
@@ -128,7 +171,7 @@ def fetch_gpa(regno: str, passwd: str) -> dict:
             {
                 "name": str(c.get("subject") or "").strip(),
                 "credits": str(c.get("FCREDITS") or ""),
-                "grade": _normalize_grade(str(c.get("remarks") or "")),
+                "grade": _normalize_grade(str(c.get("remarks") or ""), scheme),
                 "courseType": str(c.get("mthprue") or "").strip(),
                 "iaMarks": str(c.get("ia_exam") or "").strip(),
                 "uniMarks": str(c.get("uni_exam") or "").strip(),
@@ -170,4 +213,4 @@ def fetch_gpa(regno: str, passwd: str) -> dict:
                 pass
 
     cgpa = round(total_points / total_credits, 2) if total_credits else 0.0
-    return {"usn": usn, "groups": groups, "cgpa": cgpa}
+    return {"usn": usn, "scheme": scheme, "groups": groups, "cgpa": cgpa}
