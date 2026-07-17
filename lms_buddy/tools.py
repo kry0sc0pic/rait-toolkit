@@ -335,3 +335,30 @@ def _tool_max_hitrate(client: MydyClient, args: dict, user: str) -> dict:
         f"quizzes: {quiz_solved} solved to 100%, {quiz_skipped} already perfect, {quiz_failed} failed/skipped"
     )
     return _text_result(summary, structured=result)
+
+
+def _tool_solve_quizzes(client: MydyClient, args: dict, user: str) -> dict:
+    course_id = str(args.get("course_id") or "").strip()
+    if not course_id:
+        return _text_result("course_id is required.", is_error=True)
+
+    result = client.solve_pending_quizzes(course_id)
+    if isinstance(result, dict) and result.get("error"):
+        return _text_result(result["error"], is_error=True)
+
+    _cache_invalidate_prefix((user, "get_hitrates"))
+
+    results = result.get("results", [])
+    solved = [r for r in results if r.get("status") == "solved"]
+    already = [r for r in results if r.get("status") == "already_perfect"]
+    failed = [r for r in results if r.get("status") not in ("solved", "already_perfect")]
+
+    lines = [f"Quizzes checked: {result.get('quizzes_total', 0)}"]
+    for r in solved:
+        lines.append(f"- ✅ {r['name']}: solved (probe {r.get('probe_grade')} → solve {r.get('solve_grade')})")
+    for r in already:
+        lines.append(f"- ✔️  {r['name']}: already had a 100% attempt")
+    for r in failed:
+        lines.append(f"- ⚠️  {r['name']}: {r.get('error', 'unknown error')}")
+
+    return _text_result("\n".join(lines), structured=result)

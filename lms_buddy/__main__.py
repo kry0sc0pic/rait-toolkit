@@ -48,6 +48,7 @@ from .tools import (
     _tool_list_files,
     _tool_list_subjects,
     _tool_max_hitrate,
+    _tool_solve_quizzes,
     _user_key,
 )
 
@@ -178,13 +179,14 @@ mcp = FastMCP(
         "When credentials are missing, ALWAYS use AskFollowupQuestion to prompt the user — "
         "never just print a text instruction. "
         "LMS tools (MyDy): list_subjects, list_files, download_file, get_hitrates, max_hitrate, "
-        "get_overall_attendance, get_course_attendance, get_semesters, "
+        "solve_quizzes, get_overall_attendance, get_course_attendance, get_semesters, "
         "get_assignments, submit_assignment. "
         "IMPORTANT: Always call get_assignments before submit_assignment — this is enforced. "
         "NOTE: max_hitrate now also posts an invisible placeholder discussion to forums the "
         "student hasn't posted in, and takes real quiz attempts to solve any quiz without a "
-        "100% score. These are real, visible/gradable actions (not just marking pages viewed) — "
-        "mention this to the user before calling max_hitrate if it hasn't come up already. "
+        "100% score (same quiz-solving logic as the standalone solve_quizzes tool). These are "
+        "real, visible/gradable actions (not just marking pages viewed) — mention this to the "
+        "user before calling max_hitrate or solve_quizzes if it hasn't come up already. "
         "GPA tool (UniClaIRE portal): get_gpa. "
         "PDF tools: render_cover_pdf, batch_render_covers_pdf, render_eval_sheet_pdf, "
         "batch_render_eval_sheets_pdf, render_conference_letter_pdf, batch_render_conference_letters_pdf "
@@ -389,6 +391,28 @@ def max_hitrate(course_id: str, course_name: str = "") -> str:
         return "\n".join(lines)
 
     return output
+
+
+@mcp.tool()
+def solve_quizzes(course_id: str) -> str:
+    """Bring every quiz in a course to a 100% attempt (standalone — max_hitrate already calls this too).
+
+    Skips any quiz that already has a 100% attempt. For the rest: takes a
+    throwaway probe attempt (any answers — content doesn't matter) to read
+    the correct-answer key Moodle discloses on review, then a second attempt
+    answering for real. This creates real, permanent quiz attempts on the
+    student's record — not a passive read. Skips (with a reason) any quiz
+    that doesn't allow enough attempts to safely fit both a probe and a solve.
+    """
+    client, err = _login()
+    if err:
+        raise ValueError(err)
+    creds = _get_creds()
+    user = _user_key(creds)
+    result = _tool_solve_quizzes(client, {"course_id": course_id}, user)
+    if result.get("isError"):
+        raise ValueError(_text(result))
+    return _with_diff("solve_quizzes", {"course_id": course_id}, _text(result))
 
 
 @mcp.tool()
