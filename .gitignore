@@ -16,3 +16,4 @@
 *.spec
 __pycache__/
 *.pyc
+.playwright-mcp/
