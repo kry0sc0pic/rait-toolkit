@@ -1,6 +1,6 @@
 import unittest
 
-from lms_buddy.render import _multi_page
+from rait_toolkit.render import _multi_page
 
 
 DOC1 = r'''\documentclass{article}

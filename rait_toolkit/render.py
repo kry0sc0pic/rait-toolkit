@@ -1,7 +1,7 @@
 """LaTeX-based PDF rendering for experiment cover pages and evaluation sheets.
 
 Ported from https://github.com/kry0sc0pic/experiment-cover.
-Templates live in lms_buddy/templates/.
+Templates live in rait_toolkit/templates/.
 """
 from __future__ import annotations
 
