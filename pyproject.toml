@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 dependencies = [
     "beautifulsoup4>=4.13",
     "requests>=2.32",
-    "mcp>=1.0.0",
+    "mcp>=1.28.1",
 ]
 
 [project.scripts]
