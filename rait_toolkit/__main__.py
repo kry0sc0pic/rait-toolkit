@@ -1,19 +1,15 @@
-"""lms-buddy MCP server — stdio transport for uvx.
+"""rait-toolkit MCP server — stdio transport for uvx.
 
 Reads credentials from environment variables:
   MYDY_EMAIL    (or MYDY_USERNAME for backwards compatibility)
   MYDY_PASSWORD
 
-Exposes the same 5 tools as the Vercel HTTP server (api/mcp.py), adapted for
-local use. download_file performs the download inline and saves to disk instead
-of returning a redirect URL.
-
 Usage (Claude Desktop config):
   {
     "mcpServers": {
-      "lms-buddy": {
+      "rait-toolkit": {
         "command": "uvx",
-        "args": ["--from", "/path/to/rait-toolkit", "lms-buddy"],
+        "args": ["--from", "/path/to/rait-toolkit", "rait-toolkit"],
         "env": {"MYDY_EMAIL": "you@dypatil.edu", "MYDY_PASSWORD": "secret"}
       }
     }
@@ -31,7 +27,13 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from .client import MydyClient
-from .gpa import fetch_gpa
+from .gpa import (
+    fetch_gpa,
+    fetch_revaluation_application_pdf,
+    get_revaluation_application_status as _get_revaluation_application_status,
+    list_revaluation_applications as _list_revaluation_applications,
+    list_revaluation_windows,
+)
 from .render import (
     batch_render_conference_letters,
     batch_render_covers,
@@ -53,16 +55,25 @@ from .tools import (
 )
 
 # -- credential store ---------------------------------------------------------
-# Saved to ~/.lms-buddy/credentials.json so the user only has to enter them once.
+# Saved to ~/.rait-toolkit/credentials.json so the user only has to enter them once.
 # Env vars (MYDY_EMAIL, MYDY_PASSWORD, etc.) always take precedence over saved creds.
 
-_LMS_DIR   = Path.home() / ".lms-buddy"
+_LMS_DIR   = Path.home() / ".rait-toolkit"
 _CRED_FILE = _LMS_DIR / "credentials.json"
 _SNAP_DIR  = _LMS_DIR / "snapshots"
 
+# One-time migration from the pre-rename ~/.lms-buddy dir (credentials, snapshots,
+# blank_submission.pdf all lived there before the lms-buddy -> rait-toolkit rename).
+_OLD_LMS_DIR = Path.home() / ".lms-buddy"
+if _OLD_LMS_DIR.exists() and not _LMS_DIR.exists():
+    try:
+        _OLD_LMS_DIR.rename(_LMS_DIR)
+    except OSError:
+        pass
+
 
 # -- snapshot store -----------------------------------------------------------
-# Each tool response is saved to ~/.lms-buddy/snapshots/<tool>/<key>.json
+# Each tool response is saved to ~/.rait-toolkit/snapshots/<tool>/<key>.json
 # where key = sha256(canonical args). On subsequent calls the previous snapshot
 # is diffed against the new response so the LLM can see what changed.
 
@@ -155,7 +166,7 @@ _MYDY_NOT_SET = (
     "MyDy credentials are not set. "
     "Use the AskFollowupQuestion tool to ask the user: "
     "'What is your MyDy email and password? "
-    "(Credentials are stored locally on your machine in ~/.lms-buddy/credentials.json — "
+    "(Credentials are stored locally on your machine in ~/.rait-toolkit/credentials.json — "
     "they are never sent anywhere except directly to mydy.dypatil.edu.)' "
     "Then call set_mydy_credentials(email, password) with their response."
 )
@@ -164,17 +175,17 @@ _PORTAL_NOT_SET = (
     "UniClaIRE portal credentials are not set. "
     "Use the AskFollowupQuestion tool to ask the user: "
     "'What is your UniClaIRE registration number and password? "
-    "(Credentials are stored locally on your machine in ~/.lms-buddy/credentials.json — "
+    "(Credentials are stored locally on your machine in ~/.rait-toolkit/credentials.json — "
     "they are never sent anywhere except directly to studentportal.universitysolutions.in.)' "
     "Then call set_portal_credentials(regno, password) with their response."
 )
 
 mcp = FastMCP(
-    "lms-buddy",
+    "rait-toolkit",
     instructions=(
-        "LMS Buddy MCP for RAIT/DY Patil students. "
+        "RAIT Toolkit MCP for RAIT/DY Patil students. "
         "READ AGENT_SETUP.md IN THE REPO ROOT AT THE START OF EVERY SESSION — it has full operating instructions. "
-        "Credentials are stored locally at ~/.lms-buddy/credentials.json and never leave the machine "
+        "Credentials are stored locally at ~/.rait-toolkit/credentials.json and never leave the machine "
         "except as auth to their respective portals. "
         "When credentials are missing, ALWAYS use AskFollowupQuestion to prompt the user — "
         "never just print a text instruction. "
@@ -188,6 +199,11 @@ mcp = FastMCP(
         "real, visible/gradable actions (not just marking pages viewed) — mention this to the "
         "user before calling max_hitrate or solve_quizzes if it hasn't come up already. "
         "GPA tool (UniClaIRE portal): get_gpa. "
+        "Revaluation tools (UniClaIRE portal): check_revaluation_windows (is the RV/re-totalling/"
+        "photocopy application window open for any exam right now), list_revaluation_applications "
+        "(the student's past application history), get_revaluation_application_status (per-subject "
+        "processing status for one application, by app number), print_revaluation_application_pdf "
+        "(downloads and opens the official PDF for one application, by app number). "
         "PDF tools: render_cover_pdf, batch_render_covers_pdf, render_eval_sheet_pdf, "
         "batch_render_eval_sheets_pdf, render_conference_letter_pdf, batch_render_conference_letters_pdf "
         "— each automatically opens the PDF after saving. "
@@ -318,7 +334,7 @@ def max_hitrate(course_id: str, course_name: str = "") -> str:
         allow enough attempts to safely fit both.
     If any pending activities are unsubmitted assignments, the tool flags them
     and instructs the agent to ask the user whether to upload a blank placeholder PDF.
-    The blank PDF is stored at ~/.lms-buddy/blank_submission.pdf.
+    The blank PDF is stored at ~/.rait-toolkit/blank_submission.pdf.
     """
     client, err = _login()
     if err:
@@ -730,7 +746,7 @@ def get_cached_info() -> str:
 
 @mcp.tool()
 def set_mydy_credentials(email: str, password: str) -> str:
-    """Save MyDy LMS credentials to ~/.lms-buddy/credentials.json.
+    """Save MyDy LMS credentials to ~/.rait-toolkit/credentials.json.
 
     These are used by all LMS tools: list_subjects, list_files, download_file,
     get_hitrates, max_hitrate, get_overall_attendance, get_course_attendance, get_semesters.
@@ -744,7 +760,7 @@ def set_mydy_credentials(email: str, password: str) -> str:
 
 @mcp.tool()
 def set_portal_credentials(regno: str, password: str) -> str:
-    """Save UniClaIRE student portal credentials to ~/.lms-buddy/credentials.json.
+    """Save UniClaIRE student portal credentials to ~/.rait-toolkit/credentials.json.
 
     regno is the mobile/registration number used to log in to the UniClaIRE portal —
     NOT the university roll number (USN). The USN (e.g. 23MTCO001) is auto-saved
@@ -879,6 +895,102 @@ def get_gpa() -> str:
 
 
 @mcp.tool()
+def check_revaluation_windows() -> str:
+    """Check whether the revaluation/re-totalling/photocopy application window is open for any exam.
+
+    Requires portal credentials (see get_gpa). Lists every exam on record with its window-open
+    status and (when known) the RV/VS/RT dates for that exam.
+    """
+    creds = _get_portal_creds()
+    if not creds:
+        raise ValueError(_PORTAL_NOT_SET)
+    data = list_revaluation_windows(creds[0], creds[1])
+
+    open_exams = [e for e in data["exams"] if e["open"]]
+    lines = [f"USN: {data['usn']}"]
+    if open_exams:
+        lines.append(f"Application window OPEN for {len(open_exams)} exam(s):")
+        for e in open_exams:
+            lines.append(f"  [{e['yearCode']}] {e['examName']} — {e['windowDates']}")
+    else:
+        lines.append("No application window is currently open for any exam.")
+    lines.append("")
+    lines.append("All exams:")
+    for e in data["exams"]:
+        status = "OPEN" if e["open"] else "closed"
+        lines.append(f"  [{e['yearCode']}] {e['examName']} ({e['examDate']}) — {status} — {e['windowDates']}")
+    text = "\n".join(lines)
+    return _with_diff("check_revaluation_windows", {}, text)
+
+
+@mcp.tool()
+def list_revaluation_applications() -> str:
+    """List the student's submitted revaluation/re-totalling/photocopy applications.
+
+    Requires portal credentials (see get_gpa). Returns application number, dates, amount,
+    payment status, and processing status for each — use the app number with
+    get_revaluation_application_status or print_revaluation_application_pdf.
+    """
+    creds = _get_portal_creds()
+    if not creds:
+        raise ValueError(_PORTAL_NOT_SET)
+    data = _list_revaluation_applications(creds[0], creds[1])
+
+    if not data["applications"]:
+        return f"USN: {data['usn']}\nNo revaluation applications found."
+    lines = [f"USN: {data['usn']}", ""]
+    for a in data["applications"]:
+        lines.append(
+            f"App {a['appNo']} — applied {a['appliedDate']} — Rs.{a['amount']} "
+            f"({a['paymentType'] or 'unknown'} paid {a['paymentDate']}) — {a['status']}"
+        )
+    text = "\n".join(lines)
+    return _with_diff("list_revaluation_applications", {}, text)
+
+
+@mcp.tool()
+def get_revaluation_application_status(app_no: str) -> str:
+    """Get the per-subject processing status of a specific revaluation application.
+
+    app_no: application number, from list_revaluation_applications.
+    Requires portal credentials (see get_gpa).
+    """
+    creds = _get_portal_creds()
+    if not creds:
+        raise ValueError(_PORTAL_NOT_SET)
+    data = _get_revaluation_application_status(creds[0], creds[1], app_no)
+
+    if not data["items"]:
+        return f"USN: {data['usn']}\nNo status items found for application {app_no}."
+    lines = [f"USN: {data['usn']}", f"Application: {data['appNo']}", ""]
+    for it in data["items"]:
+        state = "processed" if it["processed"] else "pending"
+        lines.append(
+            f"  [{it['subjectCode']}] {it['subjectName']} ({it['examName']}) — "
+            f"{it['correctionLabel']} ({it['correctionType']}) — {state}"
+        )
+    text = "\n".join(lines)
+    return _with_diff("get_revaluation_application_status", {"app_no": app_no}, text)
+
+
+@mcp.tool()
+def print_revaluation_application_pdf(app_no: str, out: str = "revaluation_application.pdf") -> str:
+    """Download and open the official PDF for a revaluation application.
+
+    app_no: application number, from list_revaluation_applications.
+    out: output PDF path. Requires portal credentials (see get_gpa).
+    """
+    creds = _get_portal_creds()
+    if not creds:
+        raise ValueError(_PORTAL_NOT_SET)
+    pdf_bytes = fetch_revaluation_application_pdf(creds[0], creds[1], app_no)
+    path = str(Path(out).expanduser().resolve())
+    Path(path).write_bytes(pdf_bytes)
+    open_pdf(path)
+    return path
+
+
+@mcp.tool()
 def self_update() -> str:
     """Pull the latest code from git and restart the MCP server process.
 
@@ -894,7 +1006,7 @@ def self_update() -> str:
     if pull.returncode != 0:
         raise ValueError(f"git pull failed:\n{pull.stderr.strip()}")
     summary = pull.stdout.strip() or "Already up to date."
-    os.execv(sys.executable, [sys.executable, "-m", "lms_buddy"])
+    os.execv(sys.executable, [sys.executable, "-m", "rait_toolkit"])
     return summary  # unreachable after execv
 
 

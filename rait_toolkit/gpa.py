@@ -11,6 +11,7 @@ import re
 import requests
 
 PORTAL_BASE = "https://studentportal.universitysolutions.in"
+UNIV_CODE = "051"  # DY Patil univcode used across app.php endpoints (RV forms, service status, dropdowns)
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
@@ -93,24 +94,10 @@ def _calculate_sgpa(courses: list[dict]) -> float:
     return round(total_points / total_credits, 2) if total_credits else 0.0
 
 
-def fetch_gpa(regno: str, passwd: str) -> dict:
-    """Login to UniClaIRE portal and return semester groups + CGPA.
+def _portal_login(regno: str, passwd: str) -> tuple[requests.Session, str, str]:
+    """Login to the UniClaIRE portal. Returns (session, usn, scheme).
 
-    Returns:
-        {
-          "usn": str,
-          "scheme": "legacy" | "new",
-          "groups": [
-            {
-              "id": "1",
-              "sgpa": 8.5,
-              "courses": [{"name", "credits", "grade", "courseType", "iaMarks", "uniMarks", "totalMarks"}, ...]
-            },
-            ...
-          ],
-          "cgpa": 8.3
-        }
-    Or raises ValueError with an error message on failure.
+    Raises ValueError with a user-facing message on failure.
     """
     session = requests.Session()
     session.headers.update({
@@ -119,7 +106,6 @@ def fetch_gpa(regno: str, passwd: str) -> dict:
         "Accept": "*/*",
     })
 
-    # 1. Login
     login_res = session.post(
         f"{PORTAL_BASE}/signin.php",
         data={"regno": regno, "passwd": passwd},
@@ -139,7 +125,6 @@ def fetch_gpa(regno: str, passwd: str) -> dict:
     if not login_ok:
         raise ValueError(login_msg or "Login rejected — check your UniClaIRE credentials.")
 
-    # 2. Get USN
     profile_res = session.post(f"{PORTAL_BASE}/src/profile.php", timeout=10)
     profile = profile_res.json()
     usn = str(
@@ -148,7 +133,29 @@ def fetch_gpa(regno: str, passwd: str) -> dict:
     ).strip()
     if not usn:
         raise ValueError("Could not read USN from portal profile.")
-    scheme = _detect_scheme(usn)
+    return session, usn, _detect_scheme(usn)
+
+
+def fetch_gpa(regno: str, passwd: str) -> dict:
+    """Login to UniClaIRE portal and return semester groups + CGPA.
+
+    Returns:
+        {
+          "usn": str,
+          "scheme": "legacy" | "new",
+          "groups": [
+            {
+              "id": "1",
+              "sgpa": 8.5,
+              "courses": [{"name", "credits", "grade", "courseType", "iaMarks", "uniMarks", "totalMarks"}, ...]
+            },
+            ...
+          ],
+          "cgpa": 8.3
+        }
+    Or raises ValueError with an error message on failure.
+    """
+    session, usn, scheme = _portal_login(regno, passwd)
 
     # 3. List exams, deduped by trimester (keeps only the latest attempt)
     list_res = session.get(
@@ -214,3 +221,96 @@ def fetch_gpa(regno: str, passwd: str) -> dict:
 
     cgpa = round(total_points / total_credits, 2) if total_credits else 0.0
     return {"usn": usn, "scheme": scheme, "groups": groups, "cgpa": cgpa}
+
+
+def list_revaluation_windows(regno: str, passwd: str) -> dict:
+    """List every exam and whether its revaluation/re-totalling/photocopy window is open now.
+
+    Returns {"usn": str, "exams": [{"yearCode", "examName", "examDate", "resultDate",
+              "open": bool, "windowDates": str}, ...]}
+    """
+    session, usn, _ = _portal_login(regno, passwd)
+    res = session.get(
+        f"{PORTAL_BASE}/src/results_new.php",
+        params={"a": "getRvAll", "_": int(time.time() * 1000)},
+        timeout=10,
+    )
+    exams = [
+        {
+            "yearCode": str(r.get("year", "")),
+            "examName": str(r.get("examname", "")),
+            "examDate": str(r.get("examdate", "")),
+            "resultDate": str(r.get("resultdate", "")),
+            "open": str(r.get("rvenable", "0")) == "1",
+            "windowDates": re.sub(r"<br\s*/?>", " | ", str(r.get("rvdates", ""))),
+        }
+        for r in (res.json().get("data") or [])
+    ]
+    return {"usn": usn, "exams": exams}
+
+
+def list_revaluation_applications(regno: str, passwd: str) -> dict:
+    """List the student's submitted revaluation/re-totalling/photocopy applications.
+
+    Returns {"usn": str, "applications": [{"appNo", "appliedDate", "amount", "paymentDate",
+              "paymentType", "status"}, ...]}
+    """
+    session, usn, _ = _portal_login(regno, passwd)
+    res = session.get(
+        f"{PORTAL_BASE}/src/yourAppsRVRT.php",
+        params={"a": "getYourAppsRVRT", "regno": usn, "_": int(time.time() * 1000)},
+        timeout=10,
+    )
+    apps = [
+        {
+            "appNo": str(r.get("APPNO", "")),
+            "appliedDate": str(r.get("FAPPDATE", "")),
+            "amount": str(r.get("FTOTAL", "")),
+            "paymentDate": str(r.get("FACKDATE", "")),
+            "paymentType": str(r.get("FPAYMENTTYPE", "")),
+            "status": str(r.get("status", "")),
+        }
+        for r in (res.json().get("tableData") or [])
+    ]
+    return {"usn": usn, "applications": apps}
+
+
+def get_revaluation_application_status(regno: str, passwd: str, app_no: str) -> dict:
+    """Get the per-subject status of a specific revaluation/re-totalling/photocopy application.
+
+    Returns {"usn": str, "appNo": str, "items": [{"subjectCode", "subjectName", "examName",
+              "examDate", "correctionType", "correctionLabel", "processed": bool}, ...]}
+    """
+    session, usn, _ = _portal_login(regno, passwd)
+    res = session.post(
+        f"{PORTAL_BASE}/src/rvappstatus.php",
+        data={"app_no": app_no},
+        headers={"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
+        timeout=15,
+    )
+    items = [
+        {
+            "subjectCode": str(r.get("fsubcode", "")),
+            "subjectName": str(r.get("fsubname", "")).strip(),
+            "examName": str(r.get("fexamname", "")),
+            "examDate": str(r.get("fexamdate", "")),
+            "correctionType": str(r.get("fcorrtype", "")),
+            "correctionLabel": str(r.get("fcorrdescpn", "")),
+            "processed": str(r.get("frvstatus", "")) == "T",
+        }
+        for r in (res.json().get("data") or [])
+    ]
+    return {"usn": usn, "appNo": str(app_no), "items": items}
+
+
+def fetch_revaluation_application_pdf(regno: str, passwd: str, app_no: str) -> bytes:
+    """Download the printable PDF for a revaluation/re-totalling/photocopy application."""
+    session, _, _ = _portal_login(regno, passwd)
+    res = session.get(
+        f"{PORTAL_BASE}/app.php",
+        params={"a": "PrintRevaluationApplicationForm", "app_no": app_no, "univcode": UNIV_CODE},
+        timeout=20,
+    )
+    if not res.content.startswith(b"%PDF"):
+        raise ValueError("Portal did not return a PDF — check the application number.")
+    return res.content

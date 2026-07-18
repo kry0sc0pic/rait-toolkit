@@ -46,9 +46,9 @@ cd rait-toolkit
 ```json
 {
   "mcpServers": {
-    "lms-buddy": {
+    "rait-toolkit": {
       "command": "uvx",
-      "args": ["--from", "/path/to/rait-toolkit", "lms-buddy"],
+      "args": ["--from", "/path/to/rait-toolkit", "rait-toolkit"],
       "env": {
         "MYDY_EMAIL": "your@dypatil.edu",
         "MYDY_PASSWORD": "***REMOVED***",
@@ -64,7 +64,7 @@ Replace `/path/to/rait-toolkit` with your local clone path. Restart Claude Deskt
 
 `PORTAL_REGNO` is your **mobile/registration number** for the UniClaIRE portal — not your roll number.
 
-> Any credential can be omitted — Claude will use `AskFollowupQuestion` to prompt you on first use and save the response to `~/.lms-buddy/credentials.json`.
+> Any credential can be omitted — Claude will use `AskFollowupQuestion` to prompt you on first use and save the response to `~/.rait-toolkit/credentials.json`.
 
 ---
 
@@ -74,10 +74,10 @@ Replace `/path/to/rait-toolkit` with your local clone path. Restart Claude Deskt
 
 ```
 /plugin marketplace add kry0sc0pic/rait-toolkit
-/plugin install lms-buddy@rait-toolkit
+/plugin install rait-toolkit@rait-toolkit
 ```
 
-The first command registers this repo as a plugin marketplace (GitHub `owner/repo` shorthand — no clone or full URL needed); the second installs the `lms-buddy` plugin from it. Update later with `/plugin marketplace update rait-toolkit`; remove with `/plugin uninstall lms-buddy` and `/plugin marketplace remove rait-toolkit`.
+The first command registers this repo as a plugin marketplace (GitHub `owner/repo` shorthand — no clone or full URL needed); the second installs the `rait-toolkit` plugin from it. Update later with `/plugin marketplace update rait-toolkit`; remove with `/plugin uninstall rait-toolkit` and `/plugin marketplace remove rait-toolkit`.
 
 **Option B — from a local clone:**
 
@@ -106,28 +106,28 @@ Or let Claude prompt you on first use.
 Hermes has a native MCP client, so you can register the local stdio server directly:
 
 ```sh
-hermes mcp add lms-buddy --command uvx --args --from /path/to/rait-toolkit lms-buddy
-hermes mcp test lms-buddy
+hermes mcp add rait-toolkit --command uvx --args --from /path/to/rait-toolkit rait-toolkit
+hermes mcp test rait-toolkit
 ```
 
 If you want Hermes to pass credentials at startup instead of entering them later, add them inline when registering the server:
 
 ```sh
-hermes mcp add lms-buddy \
+hermes mcp add rait-toolkit \
   --command uvx \
   --env \
   MYDY_EMAIL=your@dypatil.edu \
   MYDY_PASSWORD=***REMOVED*** \
   PORTAL_REGNO=your_mobile_number \
   PORTAL_PASSWORD=***REMOVED*** \
-  --args --from /path/to/rait-toolkit lms-buddy
+  --args --from /path/to/rait-toolkit rait-toolkit
 ```
 
 Notes:
 - Replace `/path/to/rait-toolkit` with your local clone path.
 - Hermes will show the discovered tools and ask which ones to enable.
 - Start a new Hermes session (or run `/reset`) after `hermes mcp add` so the tools are loaded into the prompt.
-- If you omit credentials, use the `set_mydy_credentials` and `set_portal_credentials` tools once; they save to `~/.lms-buddy/credentials.json` for future sessions.
+- If you omit credentials, use the `set_mydy_credentials` and `set_portal_credentials` tools once; they save to `~/.rait-toolkit/credentials.json` for future sessions.
 - `PORTAL_REGNO` is your **mobile/registration number** for the UniClaIRE portal — not your roll number.
 
 ---
@@ -139,7 +139,7 @@ The server runs over stdio via `uvx`. Point your client to:
 ```json
 {
   "command": "uvx",
-  "args": ["--from", "/path/to/rait-toolkit", "lms-buddy"],
+  "args": ["--from", "/path/to/rait-toolkit", "rait-toolkit"],
   "env": {
     "MYDY_EMAIL": "your@dypatil.edu",
     "MYDY_PASSWORD": "***REMOVED***",
@@ -151,7 +151,7 @@ The server runs over stdio via `uvx`. Point your client to:
 
 ---
 
-## Tools (21 total)
+## Tools (27 total)
 
 ### LMS — MyDy
 
@@ -169,11 +169,15 @@ The server runs over stdio via `uvx`. Point your client to:
 | `get_assignments` | List assignments for a course with submission status, grade, and due date |
 | `submit_assignment` | Upload a file and submit it to an assignment; `force=True` overwrites an existing submission (requires explicit user consent) |
 
-### GPA — UniClaIRE portal
+### GPA & revaluation — UniClaIRE portal
 
 | Tool | What it does |
 |------|-------------|
 | `get_gpa` | CGPA + per-semester SGPA + course-level grade breakdown; auto-saves your USN |
+| `check_revaluation_windows` | Check whether the RV/re-totalling/photocopy application window is currently open for any exam |
+| `list_revaluation_applications` | List past revaluation/re-totalling/photocopy applications with status |
+| `get_revaluation_application_status` | Per-subject processing status for one application, by app number |
+| `print_revaluation_application_pdf` | Download and open the official PDF for one application, by app number |
 
 ### PDF rendering (requires LaTeX)
 
@@ -191,7 +195,7 @@ All PDF tools open the file in your system viewer automatically after rendering.
 | Tool | What it does |
 |------|-------------|
 | `get_cached_info` | Show stored email, regno, USN, and which credentials are configured — call at session start |
-| `set_mydy_credentials` | Save MyDy email + password to `~/.lms-buddy/credentials.json` |
+| `set_mydy_credentials` | Save MyDy email + password to `~/.rait-toolkit/credentials.json` |
 | `set_portal_credentials` | Save UniClaIRE regno + password (regno = mobile login number, not roll number) |
 | `open_pdf` | Open any PDF in the system viewer |
 | `self_update` | `git pull` and restart the server process to pick up updates |
@@ -208,11 +212,11 @@ All PDF tools open the file in your system viewer automatically after rendering.
 
 ## Credential storage
 
-Credentials are saved to `~/.lms-buddy/credentials.json` on your local machine. They are never sent anywhere except directly to their respective portals (`mydy.dypatil.edu` and `studentportal.universitysolutions.in`).
+Credentials are saved to `~/.rait-toolkit/credentials.json` on your local machine. They are never sent anywhere except directly to their respective portals (`mydy.dypatil.edu` and `studentportal.universitysolutions.in`).
 
 **Two separate auth domains:**
 - **MyDy** — email + password (used by all LMS tools)
-- **UniClaIRE portal** — registration/mobile number + password (used by `get_gpa`)
+- **UniClaIRE portal** — registration/mobile number + password (used by `get_gpa` and the revaluation tools)
 
 Note: your UniClaIRE login uses your **mobile/registration number**, not your university roll number (USN). The USN (e.g. `23MTCO001`) is fetched automatically when you first call `get_gpa`.
 
@@ -230,19 +234,7 @@ Env vars always take precedence over saved credentials:
 
 ## Response tracking
 
-Every live-data tool saves its last response to `~/.lms-buddy/snapshots/`. On subsequent calls, the response is prefixed with a unified diff showing exactly what changed since the last read — or `[No changes since last read]` if nothing did.
-
----
-
-## Web app + Vercel deployment
-
-The `api/` and `web/` directories contain a Vercel-hosted React frontend + serverless API (the original remote MCP at `lms-buddy.krishaay.dev`). This is independent of the local MCP package.
-
-```sh
-npm install
-npx vercel dev   # local full-stack dev
-vercel           # deploy
-```
+Every live-data tool saves its last response to `~/.rait-toolkit/snapshots/`. On subsequent calls, the response is prefixed with a unified diff showing exactly what changed since the last read — or `[No changes since last read]` if nothing did.
 
 ---
 
@@ -250,8 +242,8 @@ vercel           # deploy
 
 ```
 rait-toolkit/
-├── lms_buddy/               # uvx-installable MCP package
-│   ├── __main__.py          #   FastMCP server — 21 tools + 1 prompt
+├── rait_toolkit/             # uvx-installable MCP package
+│   ├── __main__.py          #   FastMCP server — 27 tools + 1 prompt
 │   ├── client.py            #   MyDy LMS HTTP client
 │   ├── gpa.py               #   UniClaIRE portal GPA fetcher
 │   ├── render.py            #   LaTeX PDF rendering
@@ -269,15 +261,9 @@ rait-toolkit/
 │           └── references/diagram-patterns.tex
 ├── .claude-plugin/
 │   └── marketplace.json     #   Marketplace wrapper
-├── api/                     # Vercel serverless API (remote MCP + web backend)
-├── web/                     # React frontend
 ├── references/
 │   └── preamble-simple.tex  #   LaTeX preamble for lab writeups
-├── client.py                # Root client (used by api/ and local_server.py)
-├── local_server.py          # Run the full stack locally without vercel dev
-├── pyproject.toml           # Python package config (hatchling)
-├── requirements.txt         # Vercel-only deps
-└── vercel.json
+└── pyproject.toml           # Python package config (hatchling)
 ```
 
 ---
