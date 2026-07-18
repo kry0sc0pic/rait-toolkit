@@ -4,10 +4,10 @@
 
 ```sh
 # Run the MCP server directly (for testing)
-uv run python -m lms_buddy
+uv run python -m rait_toolkit
 
 # Run a one-off script against the client
-uv run python -c "from client import MydyClient; ..."
+uv run python -c "from rait_toolkit.client import MydyClient; ..."
 ```
 
 No separate install step — `uv` handles deps from `pyproject.toml`.
@@ -18,27 +18,24 @@ No separate install step — `uv` handles deps from `pyproject.toml`.
 
 ```
 rait-toolkit/
-├── client.py               # Root MydyClient — source of truth, keep in sync with lms_buddy/client.py
-├── lms_buddy/
+├── rait_toolkit/
 │   ├── __main__.py         # FastMCP server (all MCP tools live here)
-│   ├── client.py           # Mirror of root client.py — must stay in sync
+│   ├── client.py           # MydyClient — MyDy LMS HTTP client
 │   ├── tools.py            # Cached business logic (list_subjects, hitrates, etc.)
-│   ├── gpa.py              # UniClaIRE GPA fetcher
+│   ├── gpa.py              # UniClaIRE GPA + revaluation fetcher
 │   ├── render.py           # LaTeX PDF rendering
 │   └── templates/          # LaTeX source templates
-├── plugin/                 # Claude Code plugin wrapper
-├── api/                    # Vercel serverless (remote MCP)
-└── web/                    # React frontend
+└── plugin/                 # Claude Code plugin wrapper
 ```
 
-**`client.py` is duplicated.** `root/client.py` is used by `api/` and direct scripts. `lms_buddy/client.py` is the copy bundled in the wheel. Any change to one must be applied to the other.
+This is an MCP-only project — no web frontend or hosted API, just the local stdio MCP server.
 
 ---
 
 ## Adding an MCP tool
 
-1. Add the method to **both** `client.py` and `lms_buddy/client.py`
-2. Add the `@mcp.tool()` decorated function in `lms_buddy/__main__.py`
+1. Add the method to `rait_toolkit/client.py`
+2. Add the `@mcp.tool()` decorated function in `rait_toolkit/__main__.py`
 3. Update the `instructions=` string in the `FastMCP(...)` call so the agent knows the tool exists
 4. Update `AGENT_SETUP.md` tool reference table
 5. Update `README.md` tools table and total count
@@ -84,7 +81,7 @@ Pre-check: GETs the view page first to detect existing submission. Returns `{"st
 
 ### Blank placeholder PDF
 
-`_ensure_blank_pdf()` writes a minimal valid PDF to `~/.lms-buddy/blank_submission.pdf` on first call. `max_hitrate` calls this and instructs the agent to ask the user before submitting it.
+`_ensure_blank_pdf()` writes a minimal valid PDF to `~/.rait-toolkit/blank_submission.pdf` on first call. `max_hitrate` calls this and instructs the agent to ask the user before submitting it.
 
 ---
 
@@ -114,10 +111,10 @@ This works for both single- and multi-page quizzes — `submit_quiz_attempt()` w
 
 ## Snapshot / diff system
 
-Every live-data tool response is saved to `~/.lms-buddy/snapshots/<tool>/<sha256(args)[:16]>.json`. On subsequent calls the old text is diffed against the new; the result is prepended as a unified diff block (or `[No changes since last read]`). Implemented in `_with_diff()` in `__main__.py`.
+Every live-data tool response is saved to `~/.rait-toolkit/snapshots/<tool>/<sha256(args)[:16]>.json`. On subsequent calls the old text is diffed against the new; the result is prepended as a unified diff block (or `[No changes since last read]`). Implemented in `_with_diff()` in `__main__.py`.
 
 ---
 
 ## Credentials
 
-Stored at `~/.lms-buddy/credentials.json`. Keys: `mydy_email`, `mydy_password`, `portal_regno`, `portal_password`, `usn`. Env vars always take precedence. Two separate auth domains — do not mix them.
+Stored at `~/.rait-toolkit/credentials.json`. Keys: `mydy_email`, `mydy_password`, `portal_regno`, `portal_password`, `usn`. Env vars always take precedence. Two separate auth domains — do not mix them.

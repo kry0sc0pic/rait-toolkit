@@ -27,14 +27,14 @@ Use this to avoid asking the user for information you already have.
 
 ## Credential rules
 
-Credentials are stored locally at `~/.lms-buddy/credentials.json`. They never leave the machine except as authentication to their respective portals.
+Credentials are stored locally at `~/.rait-toolkit/credentials.json`. They never leave the machine except as authentication to their respective portals.
 
 **Two separate domains — do not mix them up:**
 
 | Domain | Login field | What it's for |
 |--------|------------|---------------|
 | MyDy LMS | Email (`your@dypatil.edu`) | All LMS tools |
-| UniClaIRE portal | Mobile/registration number | `get_gpa` only |
+| UniClaIRE portal | Mobile/registration number | `get_gpa` and the revaluation tools |
 
 **The UniClaIRE login is a mobile number, NOT the roll number.** The roll number (USN like `23MTCO001`) is fetched from the portal after login — it is a different value.
 
@@ -114,7 +114,7 @@ When `force=True`:
 
 ### Blank placeholder PDF
 
-A blank placeholder PDF is kept at `~/.lms-buddy/blank_submission.pdf` (auto-generated on first use). When `max_hitrate` detects pending assignment activities with no submission, it will prompt you to ask the user whether they want a blank PDF submitted to fulfil the completion requirement. Use `AskFollowupQuestion` for this — do not submit automatically.
+A blank placeholder PDF is kept at `~/.rait-toolkit/blank_submission.pdf` (auto-generated on first use). When `max_hitrate` detects pending assignment activities with no submission, it will prompt you to ask the user whether they want a blank PDF submitted to fulfil the completion requirement. Use `AskFollowupQuestion` for this — do not submit automatically.
 
 ### Forum posts and quiz attempts from `max_hitrate`
 
@@ -128,6 +128,6 @@ A blank placeholder PDF is kept at `~/.lms-buddy/blank_submission.pdf` (auto-gen
 |----------|-------|
 | LMS | `list_subjects`, `list_files`, `download_file`, `get_hitrates`, `max_hitrate`, `solve_quizzes`, `get_overall_attendance`, `get_course_attendance`, `get_semesters` |
 | Assignments | `get_assignments`, `submit_assignment` |
-| GPA | `get_gpa` |
+| GPA & Revaluation | `get_gpa`, `check_revaluation_windows`, `list_revaluation_applications`, `get_revaluation_application_status`, `print_revaluation_application_pdf` |
 | PDF | `render_cover_pdf`, `batch_render_covers_pdf`, `render_eval_sheet_pdf`, `batch_render_eval_sheets_pdf` |
 | Utility | `get_cached_info`, `set_mydy_credentials`, `set_portal_credentials`, `open_pdf`, `self_update` |

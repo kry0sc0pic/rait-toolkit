@@ -1,8 +1,4 @@
-"""Pure business logic for the lms-buddy MCP tools.
-
-Extracted from api/mcp.py (which stays as the Vercel HTTP handler).
-The only change from that source: the MydyClient import is relative.
-"""
+"""Pure business logic for the rait-toolkit MCP tools."""
 from __future__ import annotations
 
 import hashlib

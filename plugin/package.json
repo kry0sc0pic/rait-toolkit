@@ -1,5 +1,5 @@
 {
-  "name": "lms-buddy-plugin",
+  "name": "rait-toolkit-plugin",
   "version": "0.5.0",
   "description": "Claude Code plugin for MyDy LMS and experiment PDF rendering",
   "private": true,
