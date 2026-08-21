@@ -575,7 +575,11 @@ def render_eval_sheet_pdf(
                                psomap=psomap, dateperf=dateperf, dateeval=dateeval,
                                detailed=detailed, out=out)
     if not result.get("success"):
-        raise ValueError(result.get("error", "Render failed"))
+        msg = result.get("error", "Render failed")
+        details = result.get("details")
+        if details:
+            msg = f"{msg}\n---- pdflatex output (tail) ----\n{details}"
+        raise ValueError(msg)
     open_pdf(result["path"])
     return result["path"]
 
@@ -596,7 +600,11 @@ def batch_render_eval_sheets_pdf(
     """
     result = batch_render_eval_sheets(documents=documents, detailed=detailed, out=out)
     if not result.get("success"):
-        raise ValueError(result.get("error", "Batch render failed"))
+        msg = result.get("error", "Batch render failed")
+        details = result.get("details")
+        if details:
+            msg = f"{msg}\n---- pdflatex output (tail) ----\n{details}"
+        raise ValueError(msg)
     open_pdf(result["path"])
     return f"Saved to: {result['path']} ({result.get('page_count', len(documents))} pages)"
 
@@ -857,6 +865,15 @@ def submit_assignment(assign_url: str, file_path: str, force: bool = False) -> s
         return (
             f"Already submitted — current status: {result['submission_status']}. "
             f"To overwrite, ask the user for explicit confirmation then pass force=True."
+        )
+
+    if result.get("status") == "no_submission_available":
+        return (
+            "No submission available — this assignment is not accepting a file "
+            "submission right now, so nothing was uploaded.\n"
+            f"Reason: {result.get('reason', 'unknown')}\n"
+            "This reflects how the assignment is configured on the LMS, not a "
+            "problem with the file or the login."
         )
 
     return (

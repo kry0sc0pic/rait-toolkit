@@ -11,7 +11,8 @@ requires-python = ">=3.10"
 dependencies = [
     "beautifulsoup4>=4.13",
     "requests>=2.32",
-    "mcp>=1.0.0",
+    # mcp 2.x removed mcp.server.fastmcp (now mcp.server.mcpserver); pin until ported.
+    "mcp>=1.0.0,<2",
 ]
 
 [project.scripts]

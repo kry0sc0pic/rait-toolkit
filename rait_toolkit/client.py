@@ -564,6 +564,35 @@ class MydyClient:
                                     "grading_status": None, "grade": None, "time_remaining": None})
         return assignments
 
+    def _diagnose_no_submission(self, soup) -> str:
+        """Explain why no file-submission form was offered for an assignment.
+
+        Called when the edit-submission page contains no submission form.
+        Scans the page for Moodle's standard notices and returns a specific,
+        human-readable reason, falling back to a general explanation.
+        """
+        text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
+        low = text.lower()
+        known = [
+            ("not accepting submission", "This assignment is not accepting submissions."),
+            ("not allowed to submit", "You are not allowed to submit this assignment."),
+            ("submissions are not being accepted", "Submissions are not being accepted for this assignment."),
+            ("no longer accept", "The submission window has closed; submissions are no longer accepted."),
+            ("cut-off date has passed", "The cut-off date has passed; submissions are no longer accepted."),
+        ]
+        for needle, msg in known:
+            if needle in low:
+                return msg
+        # Window that hasn't opened yet, e.g. "allowed from Monday, 1 September".
+        opens = re.search(r"allowed from[^.\n]{0,80}", text, re.I)
+        if opens:
+            return "The submission window is not open yet — " + opens.group(0).strip() + "."
+        return (
+            "No file submission is available for this assignment. It may not be "
+            "accepting submissions yet, the submission window may have closed, or "
+            "file upload may not be one of its enabled submission types."
+        )
+
     def submit_assignment(self, assign_url: str, file_path: str, force: bool = False) -> dict:
         """Upload a file and submit it to a Moodle assignment.
 
@@ -609,16 +638,29 @@ class MydyClient:
         except requests.RequestException as e:
             return {"status": "error", "error": f"Failed to load edit page: {e}"}
 
-        # sesskey
+        # -- detect assignments that can't take a file submission ----------
+        # When an assignment isn't accepting submissions (window not open yet
+        # or past the cut-off), the student lacks the submit capability, or a
+        # file upload simply isn't one of its enabled submission types, Moodle
+        # serves the plain view page in place of the edit form. That page has
+        # no submission <form>, so both the sesskey input and the
+        # files_filemanager field are absent. Report this as its own status
+        # instead of the misleading "Could not find sesskey" error.
         sesskey_input = soup.find("input", {"name": "sesskey"})
+        itemid_input = soup.find("input", {"name": "files_filemanager"})
+        if itemid_input is None:
+            return {
+                "status": "no_submission_available",
+                "assign_url": assign_url,
+                "reason": self._diagnose_no_submission(soup),
+            }
+
+        # A file submission form exists; a missing token now is a genuine
+        # session/scrape failure, so keep the original signal for that case.
         sesskey = sesskey_input["value"] if sesskey_input else self.sesskey
         if not sesskey:
             return {"status": "error", "error": "Could not find sesskey"}
 
-        # draft itemid (files_filemanager hidden input)
-        itemid_input = soup.find("input", {"name": "files_filemanager"})
-        if not itemid_input:
-            return {"status": "error", "error": "Could not find draft itemid (files_filemanager)"}
         itemid = itemid_input["value"]
 
         # userid
