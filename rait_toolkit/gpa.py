@@ -106,9 +106,17 @@ def _portal_login(regno: str, passwd: str) -> tuple[requests.Session, str, str]:
         "Accept": "*/*",
     })
 
+    # Establish session cookie, then fetch the server-side captcha value.
+    session.get(PORTAL_BASE, timeout=10)
+    captcha_res = session.get(f"{PORTAL_BASE}/get_captcha.php", timeout=10)
+    try:
+        captcha = captcha_res.json().get("captcha", "")
+    except Exception:
+        captcha = ""
+
     login_res = session.post(
         f"{PORTAL_BASE}/signin.php",
-        data={"regno": regno, "passwd": passwd},
+        data={"regno": regno, "passwd": passwd, "captcha": captcha},
         headers={"Content-Type": "application/x-www-form-urlencoded; charset=UTF-8"},
         timeout=15,
     )
