@@ -31,6 +31,28 @@ def _clean_text(el) -> str:
     return re.sub(r"\s+", " ", el.get_text(" ", strip=True)).strip() if el else ""
 
 
+class _HttpsUpgradeSession(requests.Session):
+    """Session that upgrades http:// redirects for the LMS host to https://
+    and applies a default timeout.
+
+    The LMS answers some URLs (e.g. /rait/login/index.php) with a 303 to
+    ``http://mydy.dypatil.edu``; port 80 is often unreachable, so following
+    it verbatim hangs forever.
+    """
+
+    DEFAULT_TIMEOUT = 30
+
+    def get_redirect_target(self, resp):
+        target = super().get_redirect_target(resp)
+        if target and target.startswith("http://mydy.dypatil.edu"):
+            target = "https://" + target[len("http://"):]
+        return target
+
+    def request(self, method, url, **kwargs):
+        kwargs.setdefault("timeout", self.DEFAULT_TIMEOUT)
+        return super().request(method, url, **kwargs)
+
+
 class MydyClient:
     """Synchronous HTTP client for the MyDy LMS.
 
@@ -41,7 +63,7 @@ class MydyClient:
     """
 
     def __init__(self):
-        self.session = requests.Session()
+        self.session = _HttpsUpgradeSession()
         self.logged_in = False
         # token-mode extras (populated when MYDY_AUTH_MODE=token)
         self.moodle_session: str | None = None
@@ -145,7 +167,7 @@ class MydyClient:
         try:
             initial_resp = self.session.get(f"{RAIT_URL}/login/index.php")
 
-            if initial_resp.url == f"{BASE_URL}/":
+            if initial_resp.url.rstrip("/") == BASE_URL:
                 payload = {"username": username, "wantsurl": "", "next": "Next"}
                 step1 = self.session.post(f"{BASE_URL}/index.php", data=payload)
                 if "rait/login/index.php" in step1.url and "uname=" in step1.url:
